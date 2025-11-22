@@ -1,0 +1,19 @@
+cd ../../os; make; cd ../bin; dlxsim -x os.dlx.obj -a -D F -u fdisk.dlx.obj; ee469_fixterminal
+make[1]: Entering directory '/home/min/a/ntulugu/ece695/lab4/flat/os'
+make[1]: Nothing to be done for 'default'.
+make[1]: Leaving directory '/home/min/a/ntulugu/ece695/lab4/flat/os'
+Stack=0x1fffc4, pc starting at 0x120c8
+Got 4 arguments.
+Available memory: 0x299e0 -> 0x200000.
+Argument count is 4.
+Argument 0 is -D.
+Argument 1 is F.
+Argument 2 is -u.
+Argument 3 is fdisk.dlx.obj.
+Exiting after illegal access at iar=0x48f4, isr=0x140
+GracefulExit: closing filesystem and exiting simulator
+DfsCloseFileSystem: Filesystem not open!Exiting at program request.
+Instructions executed: 102484
+Time simulated: 0.102 secs
+Real time elapsed: 0.009 secs
+Execution rate: 11.26M simulated instructions per real second.

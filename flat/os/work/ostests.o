@@ -1,0 +1,211 @@
+; Compiled by GCC
+.text
+	.align 2
+.proc _isspace
+.global _isspace
+_isspace:
+;  Function 'isspace'; 0 bytes of locals, 3 regs to save.
+	sw	-4(r29),r30	; push fp
+	add	r30,r0,r29	; fp = sp
+	sw	-8(r29),r31	; push ret addr
+	subui	r29,r29,#24	; alloc local storage
+	sw	0(r29),r2
+	sw	4(r29),r3
+	sw	8(r29),r4
+	lb	r2,3(r30)
+	addi	r1,r0,#0
+	andi	r3,r2,#0x00ff
+	seqi	r4,r3,#32
+	bnez	r4,L3
+	nop	; delay slot nop
+	andi	r3,r2,#0x00ff
+	seqi	r4,r3,#9
+	bnez	r4,L3
+	nop	; delay slot nop
+	andi	r3,r2,#0x00ff
+	seqi	r4,r3,#10
+	bnez	r4,L3
+	nop	; delay slot nop
+	j	L2
+	nop	; delay slot nop
+L3:
+	addi	r1,r0,#1
+L2:
+	j	L1
+	nop	; delay slot nop
+L1:
+	lw	r2,0(r29)
+	lw	r3,4(r29)
+	lw	r4,8(r29)
+	lw	r31,-8(r30)
+	add	r29,r0,r30
+	lw	r30,-4(r30)
+	jr	r31
+	nop
+.endproc _isspace
+	.align 2
+.proc _isxdigit
+.global _isxdigit
+_isxdigit:
+;  Function 'isxdigit'; 0 bytes of locals, 3 regs to save.
+	sw	-4(r29),r30	; push fp
+	add	r30,r0,r29	; fp = sp
+	sw	-8(r29),r31	; push ret addr
+	subui	r29,r29,#24	; alloc local storage
+	sw	0(r29),r2
+	sw	4(r29),r3
+	sw	8(r29),r4
+	lb	r2,3(r30)
+	addi	r1,r0,#0
+	andi	r3,r2,#0x00ff
+	sgtui	r4,r3,#47
+	beqz	r4,L7
+	nop	; delay slot nop
+	andi	r3,r2,#0x00ff
+	sleui	r4,r3,#57
+	bnez	r4,L6
+	nop	; delay slot nop
+	j	L7
+	nop	; delay slot nop
+L7:
+	andi	r3,r2,#0x00ff
+	sgtui	r4,r3,#96
+	beqz	r4,L8
+	nop	; delay slot nop
+	andi	r3,r2,#0x00ff
+	sleui	r4,r3,#102
+	bnez	r4,L6
+	nop	; delay slot nop
+	j	L8
+	nop	; delay slot nop
+L8:
+	andi	r3,r2,#0x00ff
+	sgtui	r4,r3,#64
+	beqz	r4,L5
+	nop	; delay slot nop
+	andi	r3,r2,#0x00ff
+	sleui	r4,r3,#65
+	bnez	r4,L6
+	nop	; delay slot nop
+	j	L5
+	nop	; delay slot nop
+L6:
+	addi	r1,r0,#1
+L5:
+	j	L4
+	nop	; delay slot nop
+L4:
+	lw	r2,0(r29)
+	lw	r3,4(r29)
+	lw	r4,8(r29)
+	lw	r31,-8(r30)
+	add	r29,r0,r30
+	lw	r30,-4(r30)
+	jr	r31
+	nop
+.endproc _isxdigit
+	.align 2
+.proc _DisableIntrs
+.global _DisableIntrs
+_DisableIntrs:
+;  Function 'DisableIntrs'; 0 bytes of locals, 1 regs to save.
+	sw	-4(r29),r30	; push fp
+	add	r30,r0,r29	; fp = sp
+	sw	-8(r29),r31	; push ret addr
+	subui	r29,r29,#16	; alloc local storage
+	sw	0(r29),r2
+	addi	r29,r29,#-8
+	add	r1,r0,r29
+	addi	r2,r0,#15
+	sw	(r1),r2
+	jal	_SetIntrs
+	nop	; delay slot nop
+	addi	r29,r29,#8
+	add	r2,r0,r1
+	add	r1,r0,r2
+	j	L9
+	nop	; delay slot nop
+L9:
+	lw	r2,0(r29)
+	lw	r31,-8(r30)
+	add	r29,r0,r30
+	lw	r30,-4(r30)
+	jr	r31
+	nop
+.endproc _DisableIntrs
+	.align 2
+.proc _EnableIntrs
+.global _EnableIntrs
+_EnableIntrs:
+;  Function 'EnableIntrs'; 0 bytes of locals, 1 regs to save.
+	sw	-4(r29),r30	; push fp
+	add	r30,r0,r29	; fp = sp
+	sw	-8(r29),r31	; push ret addr
+	subui	r29,r29,#16	; alloc local storage
+	sw	0(r29),r2
+	addi	r29,r29,#-8
+	add	r1,r0,r29
+	addi	r2,r0,#0
+	sw	(r1),r2
+	jal	_SetIntrs
+	nop	; delay slot nop
+	addi	r29,r29,#8
+	add	r2,r0,r1
+	add	r1,r0,r2
+	j	L10
+	nop	; delay slot nop
+L10:
+	lw	r2,0(r29)
+	lw	r31,-8(r30)
+	add	r29,r0,r30
+	lw	r30,-4(r30)
+	jr	r31
+	nop
+.endproc _EnableIntrs
+	.align 2
+.proc _RestoreIntrs
+.global _RestoreIntrs
+_RestoreIntrs:
+;  Function 'RestoreIntrs'; 0 bytes of locals, 2 regs to save.
+	sw	-4(r29),r30	; push fp
+	add	r30,r0,r29	; fp = sp
+	sw	-8(r29),r31	; push ret addr
+	subui	r29,r29,#16	; alloc local storage
+	sw	0(r29),r2
+	sw	4(r29),r3
+	lw	r2,(r30)
+	addi	r29,r29,#-8
+	add	r1,r0,r29
+	sw	(r1),r2
+	jal	_SetIntrs
+	nop	; delay slot nop
+	addi	r29,r29,#8
+	add	r3,r0,r1
+	add	r1,r0,r3
+	j	L11
+	nop	; delay slot nop
+L11:
+	lw	r2,0(r29)
+	lw	r3,4(r29)
+	lw	r31,-8(r30)
+	add	r29,r0,r30
+	lw	r30,-4(r30)
+	jr	r31
+	nop
+.endproc _RestoreIntrs
+	.align 2
+.proc _RunOSTests
+.global _RunOSTests
+_RunOSTests:
+;  Function 'RunOSTests'; 0 bytes of locals, 0 regs to save.
+	sw	-4(r29),r30	; push fp
+	add	r30,r0,r29	; fp = sp
+	sw	-8(r29),r31	; push ret addr
+	subui	r29,r29,#8	; alloc local storage
+L12:
+	lw	r31,-8(r30)
+	add	r29,r0,r30
+	lw	r30,-4(r30)
+	jr	r31
+	nop
+.endproc _RunOSTests

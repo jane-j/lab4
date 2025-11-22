@@ -1,0 +1,2 @@
+work/fdisk.o: fdisk.c ../../../include/usertraps.h ../../../include/misc.h \
+ ../include/fdisk.h ../../../include/dfs_shared.h
