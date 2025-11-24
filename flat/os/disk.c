@@ -15,6 +15,7 @@ int DiskBytesPerBlock() {
 
 //----------------------------------------------------------------------------
 // DiskSize returns the size of the hard disk, in bytes.
+// Updated to use correct DISK_NUMBLOCKS calculation
 //----------------------------------------------------------------------------
 
 int DiskSize() {
