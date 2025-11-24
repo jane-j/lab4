@@ -11,6 +11,7 @@ typedef unsigned int uint32;
 #define FDISK_FBV_BLOCK_START (FDISK_INODE_NUM_BLOCKS + FDISK_INODE_BLOCK_START)//STUDENT: define this
 #define FDISK_BOOT_FILESYSTEM_BLOCKNUM 0 // Where the boot record and superblock reside in the filesystem
 #define FDISK_SUPERBLOCK_BLOCKNUM 1
+#define FDISK_REDUNDANT_SUPERBLOCK 65535
 
 #ifndef NULL
 #define NULL (void *)0x0

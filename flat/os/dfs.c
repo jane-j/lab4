@@ -10,6 +10,8 @@ static dfs_inode inodes[DFS_INODE_MAX_NUM]; // all inodes
 static dfs_superblock sb; // superblock
 static uint32 fbv[DFS_FBV_MAX_NUM_WORDS]; // Free block vector
 
+lock_t lock;
+
 static uint32 negativeone = 0xFFFFFFFF;
 static inline uint32 invert(uint32 n) { return n ^ negativeone; }
 
@@ -32,6 +34,7 @@ void DfsModuleInit() {
 // You essentially set the file system as invalid and then open 
 // using DfsOpenFileSystem().
     sb.valid = 0;
+    lock = LockCreate();
     DfsOpenFileSystem();
 }
 
@@ -74,6 +77,7 @@ int DfsOpenFileSystem() {
     int i, j;
     disk_block * b;
     int ratio; //ratio of df_blocksize to disk_blocksize
+    char *s;
 
     if(sb.valid) {
         printf("DfsOpenFileSystem: Filesystem already open!\n");
@@ -81,41 +85,47 @@ int DfsOpenFileSystem() {
     }
 
     //Read superblock
+    printf("DfsOpenFileSystem: Reading superblock\n");
     if(DiskReadBlock(DFS_SUPERBLOCK_PHYBLOCKNUM, b) != DISK_BLOCKSIZE) {
         printf("DfsOpenFileSystem: Failed to read superblock from disk!\n");
         return DFS_FAIL;
     }
-    bcopy(b, &sb, DISK_BLOCKSIZE);
+    bcopy(b->data, (char *)&sb, sizeof(sb));
 
     ratio = sb.fsBlockSize/DISK_BLOCKSIZE;
     
     //Read inodes
+    s = (char *) inodes;
     for(i = DFS_INODE_BLOCK_START; i <= DFS_INODE_BLOCK_END; i++) {
         for(j = 0; j < ratio; j++) {
             if(DiskReadBlock(i*ratio + j, b) != DISK_BLOCKSIZE) {
                 printf("DfsOpenFileSystem: Failed to read inodes from disk!\n");
                 return DFS_FAIL;
             }
+            bcopy(b->data, s, DISK_BLOCKSIZE);
+            s += DISK_BLOCKSIZE;
         }
-        bcopy(b, inodes + (i-DFS_INODE_BLOCK_START)*DISK_BLOCKSIZE, DISK_BLOCKSIZE);
     }
 
     //Read FBV
+    s = (char *) fbv;
     for(i = DFS_FBV_BLOCK_START; i <= DFS_FBV_BLOCK_END; i++) {
         for(j = 0; j < ratio; j++) {
             if(DiskReadBlock(i*ratio + j, b) != DISK_BLOCKSIZE) {
                 printf("DfsOpenFileSystem: Failed to read fbv from disk!\n");
                 return DFS_FAIL;
             }
+            bcopy(b->data, s, DISK_BLOCKSIZE);
+            s += DISK_BLOCKSIZE;
         }
-        bcopy(b, fbv + (i-DFS_FBV_BLOCK_START)*DISK_BLOCKSIZE, DISK_BLOCKSIZE);
     }
 
     //Invalidate superblock, write to disk, then validate
     sb.valid = 0;
-    bcopy(&sb, b, DISK_BLOCKSIZE);
-    if(DiskWriteBlock(DFS_SUPERBLOCK_PHYBLOCKNUM, b) != DFS_BLOCKSIZE) {
-        printf("DfsOpenFileSystem: Failed to write superblock to disk!\n");
+    bcopy((char *)&sb, b->data, sizeof(sb));
+    i = DiskWriteBlock(DFS_SUPERBLOCK_PHYBLOCKNUM, b);
+    if(i != DISK_BLOCKSIZE) {
+        printf("DfsOpenFileSystem: Failed to write superblock to disk %d!\n", i);
         return DFS_FAIL;
     }
     sb.valid = 1;
@@ -132,42 +142,47 @@ int DfsOpenFileSystem() {
 int DfsCloseFileSystem() {
     int i, j;
     disk_block * b;
+    char * s;
     int ratio; //ratio of df_blocksize to disk_blocksize
 
     if(!sb.valid) {
-        printf("DfsCloseFileSystem: Filesystem not open!");
+        printf("DfsCloseFileSystem: Filesystem not open!\n");
         return DFS_FAIL;
     }
 
     ratio = sb.fsBlockSize/DISK_BLOCKSIZE;
     
     //Write inodes
+    s = (char *) inodes;
     for(i = DFS_INODE_BLOCK_START; i <= DFS_INODE_BLOCK_END; i++) {
         for(j = 0; j < ratio; j++) {
-            bcopy(inodes + (i-DFS_INODE_BLOCK_START)*DISK_BLOCKSIZE, b, DISK_BLOCKSIZE);
+            bcopy(s , b->data, DISK_BLOCKSIZE);
             if(DiskWriteBlock(i*ratio + j, b) != DISK_BLOCKSIZE) {
                 printf("DfsCloseFileSystem: Failed to write inodes to disk!\n");
                 return DFS_FAIL;
             }
+            s += DISK_BLOCKSIZE;
         }
     }
 
     //Write FBV
+    s = (char *) fbv;
+    printf("before closing fbv[65535] = 0x%x\n", fbv[2047]);
     for(i = DFS_FBV_BLOCK_START; i <= DFS_FBV_BLOCK_END; i++) {
-        bcopy(fbv + (i-DFS_FBV_BLOCK_START)*DISK_BLOCKSIZE, b, DISK_BLOCKSIZE);
         for(j = 0; j < ratio; j++) {
+            bcopy(s, b->data, DISK_BLOCKSIZE);
             if(DiskWriteBlock(i*ratio + j, b) != DISK_BLOCKSIZE) {
                 printf("DfsCloseFileSystem: Failed to write fbv to disk!\n");
                 return DFS_FAIL;
             }
+            s += DISK_BLOCKSIZE;
         }
-        
     }
 
     //write sb to disk, then invalidate
-    bcopy(&sb, b, DISK_BLOCKSIZE);
-    if(DiskWriteBlock(DFS_SUPERBLOCK_PHYBLOCKNUM, b) != DFS_BLOCKSIZE) {
-        printf("DfsOpenFileSystem: Failed to write superblock to disk!\n");
+    bcopy((char *)&sb, b->data, sizeof(sb));
+    if(DiskWriteBlock(DFS_SUPERBLOCK_PHYBLOCKNUM, b) != DISK_BLOCKSIZE) {
+        printf("DfsCloseFileSystem: Failed to write superblock to disk!\n");
         return DFS_FAIL;
     }
     sb.valid = 0;
@@ -180,7 +195,7 @@ int DfsCloseFileSystem() {
 // locks where necessary.
 //-----------------------------------------------------------------
 
-uint32 DfsAllocateBlock() {
+int DfsAllocateBlock() {
 // Check that file system has been validly loaded into memory
 // Find the first free block using the free block vector (FBV), mark it in use
 // Return handle to block
@@ -188,15 +203,20 @@ uint32 DfsAllocateBlock() {
 //TODO: USE LOCKS
     int i = 0;
     int bit_position = 0;
+    int l;
 
     if(!sb.valid) {
         printf("DfsAllocateBlock: Filesystem not valid in memory!\n");
         return DFS_FAIL;
     }
 
+    if(LockHandleAcquire(lock) == SYNC_FAIL) {
+        printf("DfsAllocateBlock: Failed to acquire lock!\n");
+        return DFS_FAIL;
+    }
     for(i = 0; i < DFS_FBV_MAX_NUM_WORDS; i++) {
         if(fbv[i] != 0) {
-            //printf("MemoryAllocPage: Free page at %d!\n", i);
+            printf("DfsAllocateBlock: Free page at %d!\n", i);
             for(bit_position = 0; bit_position < 32; bit_position++) {
                 if( (fbv[i] & (0x1 << bit_position)) != 0 ) {
                     //Mark the block as used
@@ -206,7 +226,8 @@ uint32 DfsAllocateBlock() {
             }
         }
     }
-
+    LockHandleRelease(lock);
+    printf("DfsAllocateBlock: No free blocks!\n");
     return DFS_FAIL;
 }
 
@@ -254,7 +275,7 @@ int DfsReadBlock(uint32 blocknum, dfs_block *b) {
             printf("DfsReadBlock: Failed to read from disk!\n");
             return DFS_FAIL;
         }
-        bcopy(db, b + i*DISK_BLOCKSIZE, DISK_BLOCKSIZE);
+        bcopy(db->data, b->data + i*DISK_BLOCKSIZE, DISK_BLOCKSIZE);
     }
     return DFS_BLOCKSIZE;
 }
@@ -272,6 +293,9 @@ int DfsWriteBlock(uint32 blocknum, dfs_block *b){
     int i;
     disk_block * db;
 
+    idx = blocknum/32;
+    bit_pos = blocknum % 32;
+
     if(!sb.valid) {
         printf("DfsWriteBlock: Filesystem not valid in memory!\n");
         return DFS_FAIL;
@@ -282,7 +306,7 @@ int DfsWriteBlock(uint32 blocknum, dfs_block *b){
     }
 
     for(i = 0; i < (DFS_BLOCKSIZE/DISK_BLOCKSIZE); i++) {
-        bcopy(b + i*DISK_BLOCKSIZE, db, DISK_BLOCKSIZE);
+        bcopy(b->data + i*DISK_BLOCKSIZE, db->data, DISK_BLOCKSIZE);
         if(DiskWriteBlock(blocknum*(DFS_BLOCKSIZE/DISK_BLOCKSIZE) + i, db) != DISK_BLOCKSIZE) {
             printf("DfsWriteBlock: Failed to read from disk!\n");
             return DFS_FAIL;
@@ -303,7 +327,27 @@ int DfsWriteBlock(uint32 blocknum, dfs_block *b){
 //-----------------------------------------------------------------
 
 uint32 DfsInodeFilenameExists(char *filename) {
+    uint32 i;
+    int j;
+    char * name;
 
+    for(j = 0; j < DFS_INODE_MAX_NUM; j++) {
+        if(inodes[j].inuse) {
+            name = inodes[j].fileName;
+            if(compare_strings(name, filename)) return j;
+        }
+    }
+    printf("DfsInodeFilenameExists: File inode does not exist!\n");
+    return DFS_FAIL;
+}
+
+int compare_strings(char *str1, char *str2) {
+    while(*str1 && *str2) {
+        if(*str1 != *str2) return 0;
+        str1++;
+        str2++;
+    }
+    return (*str1 == *str2);
 }
 
 
@@ -316,7 +360,20 @@ uint32 DfsInodeFilenameExists(char *filename) {
 //-----------------------------------------------------------------
 
 uint32 DfsInodeOpen(char *filename) {
+    uint32 handle = DfsInodeFilenameExists(filename);
+    if(handle != DFS_FAIL) return handle;
 
+    //Allocate a new inode
+    handle = DfsAllocateBlock();
+    if(handle == DFS_FAIL) return DFS_FAIL;
+
+    return handle;
+
+    //Allocate a new inode
+    handle = DfsAllocateBlock();
+    if(handle == DFS_FAIL) return DFS_FAIL;
+
+    return handle;
 }
 
 
@@ -329,7 +386,31 @@ uint32 DfsInodeOpen(char *filename) {
 //-----------------------------------------------------------------
 
 int DfsInodeDelete(uint32 handle) {
+    uint32 i;
+    uint32 blocknum;
+    dfs_inode *inode;
+    
+    inode = &inodes[handle];
 
+    for(i = 0; i < DFS_DIR_TRANS_TABLE_SIZE; i++) {
+        if(inode->dirTransTable[i] != 0) {
+            DfsFreeBlock(inode->dirTransTable[i]);
+        }
+        inode->dirTransTable[i] = 0;
+    }
+
+    if(inode->indirTransTableBase != 0) {
+        DfsFreeBlock(inode->indirTransTableBase);
+        inode->indirTransTableBase = 0;
+    }
+
+
+    DfsFreeBlock(inode->doubleIndirTransTableBase);
+    for(i = 0; i < 10; i++) {
+        DfsFreeBlock(inode->dirTransTable[i]);
+    }
+    inode->inuse = 0;
+    return DFS_SUCCESS;
 }
 
 
@@ -396,4 +477,70 @@ uint32 DfsInodeAllocateVirtualBlock(uint32 handle, uint32 virtual_blocknum) {
 
 uint32 DfsInodeTranslateVirtualToFilesys(uint32 handle, uint32 virtual_blocknum) {
 
+}
+
+
+
+///Functions for debug
+void DfsPrintSuperblock() {
+    printf("DFS Superblock:\n");
+    printf("  valid           : %d\n", sb.valid);
+    printf("  fsBlockSize     : %u bytes\n", sb.fsBlockSize);
+    printf("  numFsBlocks     : %u\n", sb.numFsBlocks);
+    printf("  firstInodeBlock : %u\n", sb.firstInodeBlock);
+    printf("  numInodes       : %u\n", sb.numInodes);
+    printf("  firstFBVBlock   : %u\n", sb.firstFBVBlock);
+}
+
+void DfsPrintInode(dfs_inode *inode) {
+    int i;
+    printf("DFS Inode:\n");
+    printf("  inuse                    : %d\n", inode->inuse);
+    printf("  fileSize                 : %u\n", inode->fileSize);
+
+    printf("  dirTransTable            : [");
+    for ( i = 0; i < 10; i++) {
+        printf("%u", inode->dirTransTable[i]);
+        if (i != 9) printf(", ");
+    }
+    printf("]\n");
+
+    printf("  indirTransTableBase      : %u\n", inode->indirTransTableBase);
+    printf("  doubleIndirTransTableBase: %u\n", inode->doubleIndirTransTableBase);
+
+    printf("  fileName                 : \"%s\"\n", inode->fileName);
+}
+
+void DfsPrintInodeTable() {
+    int i;
+    printf("=== DFS Inode Table (%d inodes) ===\n", DFS_INODE_MAX_NUM);
+
+    for ( i = 0; i < DFS_INODE_MAX_NUM; i++) {
+        printf("\n--- Inode %d ---\n", i);
+        DfsPrintInode(&inodes[i]);
+    }
+}
+
+void DfsPrintFBVBlocks() {
+    int block;
+    printf("=== DFS Free Block Status ===\n");
+    for ( block = 0; block < DFS_FBV_MAX_NUM_WORDS; block++) {
+        printf("FBV[%d] = 0x%x\n", block, fbv[block]);
+    }
+}
+
+void DfsReadDiskSuperblock() {
+  int i;
+  disk_block *b;
+  dfs_superblock sb;
+
+  i = DiskReadBlock(DFS_SUPERBLOCK_PHYBLOCKNUM, b);
+//   bcopy(b->data, (char *)&sb, sizeof(dfs_superblock));
+//   printf("Disk Superblock:\n");
+//   printf("  valid           : %d\n", sb.valid);
+//   printf("  fsBlockSize     : %u bytes\n", sb.fsBlockSize);
+//   printf("  numFsBlocks     : %u\n", sb.numFsBlocks);
+//   printf("  firstInodeBlock : %u\n", sb.firstInodeBlock);
+//   printf("  numInodes       : %u\n", sb.numInodes);
+//   printf("  firstFBVBlock   : %u\n", sb.firstFBVBlock);
 }
