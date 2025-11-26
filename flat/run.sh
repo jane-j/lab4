@@ -1,4 +1,4 @@
-rm /tmp/ece59515.img
+rm /tmp/niharika.img
 cd apps/fdisk
 make clean
 cd ../../os
@@ -11,4 +11,4 @@ make run > out.txt
 make clean
 cd ../../os
 make clean
-cd ../..
+cd ../

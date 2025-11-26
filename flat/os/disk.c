@@ -15,7 +15,6 @@ int DiskBytesPerBlock() {
 
 //----------------------------------------------------------------------------
 // DiskSize returns the size of the hard disk, in bytes.
-// Updated to use correct DISK_NUMBLOCKS calculation
 //----------------------------------------------------------------------------
 
 int DiskSize() {
@@ -137,6 +136,7 @@ int DiskReadBlock (uint32 blocknum, disk_block *b) {
     return DISK_FAIL;
   }
 
+  printf("opened the filesystem\n");
   // Read data from virtual disk
   FsSeek(fsfd, blocknum * DISK_BLOCKSIZE, FS_SEEK_SET);
   if (FsRead(fsfd, b->data, DISK_BLOCKSIZE) != DISK_BLOCKSIZE) {
@@ -144,10 +144,11 @@ int DiskReadBlock (uint32 blocknum, disk_block *b) {
     FsClose (fsfd);
     return DISK_FAIL;
   }
-
+  printf("read the filesystem\n");
+  printf("bdata[%d] = %d\n", 0,b->data[0]);
   // Close the hard disk file
   FsClose (fsfd);
-
+printf("closed the filesystem\n");
   RestoreIntrs(intrvals);
   return DISK_BLOCKSIZE;
 }
