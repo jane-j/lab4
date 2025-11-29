@@ -150,7 +150,7 @@ int DfsOpenFileSystem() {
 
   for(i = sb.start_block_inode; i <= sb.start_block_fbv - 1; i++)
   {
-    dfs_block_size = DfsReadBlockUncached(i, &new_dfs_block);
+    dfs_block_size = DfsReadBlock(i, &new_dfs_block);
 
     if(dfs_block_size == DFS_FAIL)
     {
@@ -164,7 +164,7 @@ int DfsOpenFileSystem() {
 
   for(i = sb.start_block_fbv; i <= sb.start_block_fbv + fbv_block_num - 1; i++)
   {
-    dfs_block_size = DfsReadBlockUncached(i, &new_dfs_block);
+    dfs_block_size = DfsReadBlock(i, &new_dfs_block);
     
     if(dfs_block_size == DFS_FAIL)
     {
@@ -214,7 +214,7 @@ int DfsCloseFileSystem() {
   for(i = sb.start_block_inode; i <= sb.start_block_fbv - 1; i++)
   {
     bcopy((char *)(inodes + ((i - sb.start_block_inode) * (sb.block_size / 128))), new_dfs_block.data, sb.block_size);
-    dfs_block_size = DfsWriteBlockUncached(i, &new_dfs_block);
+    dfs_block_size = DfsWriteBlock(i, &new_dfs_block);
 
     if(dfs_block_size == DFS_FAIL)
     {
@@ -227,7 +227,7 @@ int DfsCloseFileSystem() {
   for(i = sb.start_block_fbv; i <= sb.start_block_fbv + fbv_block_num - 1; i++)
   {
     bcopy((char *)(fbv + ((i - sb.start_block_fbv) * (sb.block_size / 4))), new_dfs_block.data, sb.block_size);
-    dfs_block_size = DfsWriteBlockUncached(i, &new_dfs_block);
+    dfs_block_size = DfsWriteBlock(i, &new_dfs_block);
     
     if(dfs_block_size == DFS_FAIL)
     {
@@ -369,158 +369,158 @@ int DfsFreeBlock(int blocknum) {
 // must be allocated in order to read from it.  Returns DFS_FAIL
 // on failure, and the number of bytes read on success.  
 //-----------------------------------------------------------------
-int DfsReadBlock(int blocknum, dfs_block *b) {
-  int fbv_idx = blocknum / 32;
-  int cache_handle;
-  int total_read;
-  double latency_time;
-  int miss_latency_int;
-  double hit_rate;
-  double miss_rate;
-  int i;
-  cache_block *c=NULL;
-  dfs_block *temp;
-  int cache_handle_temp;
+// int DfsReadBlock(int blocknum, dfs_block *b) {
+//   int fbv_idx = blocknum / 32;
+//   int cache_handle;
+//   int total_read;
+//   double latency_time;
+//   int miss_latency_int;
+//   double hit_rate;
+//   double miss_rate;
+//   int i;
+//   cache_block *c=NULL;
+//   dfs_block *temp;
+//   int cache_handle_temp;
 
-  if(sb.valid == 0)
-  {
-    return DFS_FAIL;
-  }
+//   if(sb.valid == 0)
+//   {
+//     return DFS_FAIL;
+//   }
 
-  if(fbv_idx < 0 || fbv_idx > DFS_FBV_MAX_NUM_WORDS - 1)
-  {
-    return DFS_FAIL;
-  }
+//   if(fbv_idx < 0 || fbv_idx > DFS_FBV_MAX_NUM_WORDS - 1)
+//   {
+//     return DFS_FAIL;
+//   }
 
-  if((fbv[fbv_idx] & ((0x1) << (blocknum % 32))) != 0)
-  {
-    return DFS_FAIL;
-  }
+//   if((fbv[fbv_idx] & ((0x1) << (blocknum % 32))) != 0)
+//   {
+//     return DFS_FAIL;
+//   }
 
-  if(LockHandleAcquire(cache_lock) == SYNC_FAIL)
-  {
-    return DFS_FAIL;
-  }
+//   if(LockHandleAcquire(cache_lock) == SYNC_FAIL)
+//   {
+//     return DFS_FAIL;
+//   }
 
-  cache_handle = DfsCacheHit(blocknum);
+//   cache_handle = DfsCacheHit(blocknum);
   
-  if(cache_handle != DFS_FAIL)
-  {
-    bcopy(caches[cache_handle].data, b->data, sb.block_size);
-    caches[cache_handle].timestamp = ClkGetCurTime();
-    AQueueRemove(&(caches[cache_handle].l));
+//   if(cache_handle != DFS_FAIL)
+//   {
+//     bcopy(caches[cache_handle].data, b->data, sb.block_size);
+//     caches[cache_handle].timestamp = ClkGetCurTime();
+//     AQueueRemove(&(caches[cache_handle].l));
 
-    if(LockHandleRelease(cache_lock) == SYNC_FAIL)
-    {
-      return DFS_FAIL;
-    } 
+//     if(LockHandleRelease(cache_lock) == SYNC_FAIL)
+//     {
+//       return DFS_FAIL;
+//     } 
 
-    if(not_translation != 0)
-    {
-      last_blocknum_read = blocknum;
-    }
-    return sb.block_size;
-  }
+//     if(not_translation != 0)
+//     {
+//       last_blocknum_read = blocknum;
+//     }
+//     return sb.block_size;
+//   }
   
-  latency_time = ClkGetCurTime();
+//   latency_time = ClkGetCurTime();
 
-  total_read = DfsReadBlockUncached(blocknum, b);
+//   total_read = DfsReadBlockUncached(blocknum, b);
 
-  if(total_read == DFS_FAIL)
-  {
-    LockHandleRelease(cache_lock);
-    return DFS_FAIL;
-  }
+//   if(total_read == DFS_FAIL)
+//   {
+//     LockHandleRelease(cache_lock);
+//     return DFS_FAIL;
+//   }
 
-  cache_handle = DfsCacheAllocateSlot(blocknum);
+//   cache_handle = DfsCacheAllocateSlot(blocknum);
 
-  if(cache_handle == DFS_FAIL)
-  {
-    LockHandleRelease(cache_lock);
-    return DFS_FAIL;
-  }
+//   if(cache_handle == DFS_FAIL)
+//   {
+//     LockHandleRelease(cache_lock);
+//     return DFS_FAIL;
+//   }
   
-  caches[cache_handle].valid = 1;
-  caches[cache_handle].dirty = 0;
-  caches[cache_handle].blocknum = blocknum;
-  bcopy(b->data, caches[cache_handle].data, sb.block_size);
-  caches[cache_handle].timestamp = ClkGetCurTime();
+//   caches[cache_handle].valid = 1;
+//   caches[cache_handle].dirty = 0;
+//   caches[cache_handle].blocknum = blocknum;
+//   bcopy(b->data, caches[cache_handle].data, sb.block_size);
+//   caches[cache_handle].timestamp = ClkGetCurTime();
 
-  // Added for bulk read ////////////////////////////////////////////
-  if(not_translation != 0)
-  {
-    if(blocknum == last_blocknum_read + 1)
-    {
-      cur_wnd_read = ((cur_wnd_read * 2) > MAX_WND) ? MAX_WND : (cur_wnd_read * 2);
-    }
-    else 
-    {
-      cur_wnd_read = DEF_WND;
-      while (!AQueueEmpty(&prefetch_queue_read)) {
-        c = (cache_block *)AQueueObject(AQueueFirst(&prefetch_queue_read));
-        c->valid = 0;
-        c->dirty = 0;
-        if (AQueueRemove(&(c->l)) != QUEUE_SUCCESS)
-        {
-          return DFS_FAIL;
-        }
-      }
-    }
+//   // Added for bulk read ////////////////////////////////////////////
+//   if(not_translation != 0)
+//   {
+//     if(blocknum == last_blocknum_read + 1)
+//     {
+//       cur_wnd_read = ((cur_wnd_read * 2) > MAX_WND) ? MAX_WND : (cur_wnd_read * 2);
+//     }
+//     else 
+//     {
+//       cur_wnd_read = DEF_WND;
+//       while (!AQueueEmpty(&prefetch_queue_read)) {
+//         c = (cache_block *)AQueueObject(AQueueFirst(&prefetch_queue_read));
+//         c->valid = 0;
+//         c->dirty = 0;
+//         if (AQueueRemove(&(c->l)) != QUEUE_SUCCESS)
+//         {
+//           return DFS_FAIL;
+//         }
+//       }
+//     }
 
-    for(i = blocknum + 1; i <= blocknum + cur_wnd_read - 1; i++)
-    {
-      if(DfsReadBlockUncached(i, temp) == DFS_FAIL)
-      {
-        LockHandleRelease(cache_lock);
-        return DFS_FAIL;
-      }
+//     for(i = blocknum + 1; i <= blocknum + cur_wnd_read - 1; i++)
+//     {
+//       if(DfsReadBlockUncached(i, temp) == DFS_FAIL)
+//       {
+//         LockHandleRelease(cache_lock);
+//         return DFS_FAIL;
+//       }
 
-      cache_handle_temp = DfsCacheAllocateSlot(i);
+//       cache_handle_temp = DfsCacheAllocateSlot(i);
 
-      if(cache_handle_temp == DFS_FAIL)
-      {
-        LockHandleRelease(cache_lock);
-        return DFS_FAIL;
-      }
+//       if(cache_handle_temp == DFS_FAIL)
+//       {
+//         LockHandleRelease(cache_lock);
+//         return DFS_FAIL;
+//       }
       
-      caches[cache_handle_temp].valid = 1;
-      caches[cache_handle_temp].dirty = 0;
-      caches[cache_handle_temp].blocknum = i;
-      bcopy(temp->data, caches[cache_handle_temp].data, sb.block_size);
-      caches[cache_handle_temp].timestamp = latency_time;
+//       caches[cache_handle_temp].valid = 1;
+//       caches[cache_handle_temp].dirty = 0;
+//       caches[cache_handle_temp].blocknum = i;
+//       bcopy(temp->data, caches[cache_handle_temp].data, sb.block_size);
+//       caches[cache_handle_temp].timestamp = latency_time;
 
-      if ((caches[cache_handle_temp].l = AQueueAllocLink(&caches[cache_handle_temp])) == NULL)
-      {
-        return DFS_FAIL;
-      }
-      if (AQueueInsertLast(&prefetch_queue_read, caches[cache_handle_temp].l) != QUEUE_SUCCESS)
-      {
-        return DFS_FAIL;
-      }
-    }
-  }
-  /////////////////////////////////////////////////////////////////
-  miss_latency = miss_latency + ((caches[cache_handle].timestamp - latency_time) - miss_latency) / (num_total_access - num_hit);
-  // miss_latency = (miss_latency * (num_total_access - num_hit - 1) + (caches[cache_handle].timestamp - latency_time)) / (num_total_access - num_hit);
-  miss_latency_int = (int)miss_latency;
-  hit_rate = (double)num_hit / (double)num_total_access * 100;
-  miss_rate = 100.0 - hit_rate;
-  printf("Cache Miss: Hit Rate = %.3f%%, Miss Rate = %.3f%%, ", hit_rate, miss_rate);
-  printf("Disk Reads = %d, Disk Writes = %d, Miss Handling Latency = %dms\n", num_disk_reads, num_disk_writes, miss_latency_int);
+//       if ((caches[cache_handle_temp].l = AQueueAllocLink(&caches[cache_handle_temp])) == NULL)
+//       {
+//         return DFS_FAIL;
+//       }
+//       if (AQueueInsertLast(&prefetch_queue_read, caches[cache_handle_temp].l) != QUEUE_SUCCESS)
+//       {
+//         return DFS_FAIL;
+//       }
+//     }
+//   }
+//   /////////////////////////////////////////////////////////////////
+//   miss_latency = miss_latency + ((caches[cache_handle].timestamp - latency_time) - miss_latency) / (num_total_access - num_hit);
+//   // miss_latency = (miss_latency * (num_total_access - num_hit - 1) + (caches[cache_handle].timestamp - latency_time)) / (num_total_access - num_hit);
+//   miss_latency_int = (int)miss_latency;
+//   hit_rate = (double)num_hit / (double)num_total_access * 100;
+//   miss_rate = 100.0 - hit_rate;
+//   printf("Cache Miss: Hit Rate = %.3f%%, Miss Rate = %.3f%%, ", hit_rate, miss_rate);
+//   printf("Disk Reads = %d, Disk Writes = %d, Miss Handling Latency = %dms\n", num_disk_reads, num_disk_writes, miss_latency_int);
 
-  if(LockHandleRelease(cache_lock) == SYNC_FAIL)
-  {
-    return DFS_FAIL;
-  }
+//   if(LockHandleRelease(cache_lock) == SYNC_FAIL)
+//   {
+//     return DFS_FAIL;
+//   }
 
-  if(not_translation != 0)
-  {
-    last_blocknum_read = blocknum;
-  }
-  return total_read;
-}
+//   if(not_translation != 0)
+//   {
+//     last_blocknum_read = blocknum;
+//   }
+//   return total_read;
+// }
 
-int DfsReadBlockUncached(int blocknum, dfs_block *b) {
+int DfsReadBlock(int blocknum, dfs_block *b) {
   int i;
   int physical_block_num = sb.block_size / DiskBytesPerBlock();
   int data_index;
@@ -570,152 +570,152 @@ int DfsReadBlockUncached(int blocknum, dfs_block *b) {
 // must be allocated in order to write to it.  Returns DFS_FAIL
 // on failure, and the number of bytes written on success.  
 //-----------------------------------------------------------------
-int DfsWriteBlock(int blocknum, dfs_block *b){
-  // dfs_block new_dfs_block;
-  int fbv_idx = blocknum / 32;
-  int cache_handle;
-  int total_write;
-  double latency_time;
-  int miss_latency_int;
-  double hit_rate;
-  double miss_rate;
-  int i;
-  cache_block *c=NULL;
-  int cache_handle_temp;
+// int DfsWriteBlock(int blocknum, dfs_block *b){
+//   // dfs_block new_dfs_block;
+//   int fbv_idx = blocknum / 32;
+//   int cache_handle;
+//   int total_write;
+//   double latency_time;
+//   int miss_latency_int;
+//   double hit_rate;
+//   double miss_rate;
+//   int i;
+//   cache_block *c=NULL;
+//   int cache_handle_temp;
 
-  if(sb.valid == 0)
-  {
-    return DFS_FAIL;
-  }
+//   if(sb.valid == 0)
+//   {
+//     return DFS_FAIL;
+//   }
 
-  if(fbv_idx < 0 || fbv_idx > DFS_FBV_MAX_NUM_WORDS - 1)
-  {
-    return DFS_FAIL;
-  }
+//   if(fbv_idx < 0 || fbv_idx > DFS_FBV_MAX_NUM_WORDS - 1)
+//   {
+//     return DFS_FAIL;
+//   }
 
-  if((fbv[fbv_idx] & ((0x1) << (blocknum % 32))) != 0)
-  {
-    return DFS_FAIL;
-  }
+//   if((fbv[fbv_idx] & ((0x1) << (blocknum % 32))) != 0)
+//   {
+//     return DFS_FAIL;
+//   }
 
-  if(LockHandleAcquire(cache_lock) == SYNC_FAIL)
-  {
-    return DFS_FAIL;
-  }
+//   if(LockHandleAcquire(cache_lock) == SYNC_FAIL)
+//   {
+//     return DFS_FAIL;
+//   }
 
-  cache_handle = DfsCacheHit(blocknum);
+//   cache_handle = DfsCacheHit(blocknum);
   
-  if(cache_handle != DFS_FAIL)
-  {
-    bcopy(b->data, caches[cache_handle].data, sb.block_size);
-    caches[cache_handle].dirty = 1;
-    caches[cache_handle].timestamp = ClkGetCurTime();
-    AQueueRemove(&(caches[cache_handle].l));
+//   if(cache_handle != DFS_FAIL)
+//   {
+//     bcopy(b->data, caches[cache_handle].data, sb.block_size);
+//     caches[cache_handle].dirty = 1;
+//     caches[cache_handle].timestamp = ClkGetCurTime();
+//     AQueueRemove(&(caches[cache_handle].l));
 
-    if(LockHandleRelease(cache_lock) == SYNC_FAIL)
-    {
-      return DFS_FAIL;
-    } 
+//     if(LockHandleRelease(cache_lock) == SYNC_FAIL)
+//     {
+//       return DFS_FAIL;
+//     } 
 
-    if(not_translation != 0)
-    {
-      last_blocknum_write = blocknum;
-    }
-    return sb.block_size;
-  }
+//     if(not_translation != 0)
+//     {
+//       last_blocknum_write = blocknum;
+//     }
+//     return sb.block_size;
+//   }
   
-  latency_time = ClkGetCurTime();
-  cache_handle = DfsCacheAllocateSlot(blocknum);
+//   latency_time = ClkGetCurTime();
+//   cache_handle = DfsCacheAllocateSlot(blocknum);
 
-  if(cache_handle == DFS_FAIL)
-  {
-    LockHandleRelease(cache_lock);
-    return DFS_FAIL;
-  }
+//   if(cache_handle == DFS_FAIL)
+//   {
+//     LockHandleRelease(cache_lock);
+//     return DFS_FAIL;
+//   }
 
-  // total_read = DfsReadBlockUncached(blocknum, &new_dfs_block);
+//   // total_read = DfsReadBlockUncached(blocknum, &new_dfs_block);
 
-  // if(total_read == DFS_FAIL)
-  // {
-  //   LockHandleRelease(cache_lock);
-  //   return DFS_FAIL;
-  // }
+//   // if(total_read == DFS_FAIL)
+//   // {
+//   //   LockHandleRelease(cache_lock);
+//   //   return DFS_FAIL;
+//   // }
 
-  // bcopy(new_dfs_block.data, caches[cache_handle].data, sb.block_size);
-  caches[cache_handle].valid = 1;
-  caches[cache_handle].dirty = 1;
-  caches[cache_handle].blocknum = blocknum;
-  bcopy(b->data, caches[cache_handle].data, sb.block_size);
-  total_write = sb.block_size;
-  caches[cache_handle].timestamp = ClkGetCurTime();
+//   // bcopy(new_dfs_block.data, caches[cache_handle].data, sb.block_size);
+//   // caches[cache_handle].valid = 1;
+//   // caches[cache_handle].dirty = 1;
+//   // caches[cache_handle].blocknum = blocknum;
+//   // bcopy(b->data, caches[cache_handle].data, sb.block_size);
+//   // total_write = sb.block_size;
+//   // caches[cache_handle].timestamp = ClkGetCurTime();
 
-  // Added for bulk write ////////////////////////////////////////////
-  if(not_translation != 0)
-  {
-    if(blocknum == last_blocknum_write + 1)
-    {
-      cur_wnd_write = ((cur_wnd_write * 2) > MAX_WND) ? MAX_WND : (cur_wnd_write * 2);
-    }
-    else 
-    {
-      cur_wnd_write = DEF_WND;
-      while (!AQueueEmpty(&prefetch_queue_write)) {
-        c = (cache_block *)AQueueObject(AQueueFirst(&prefetch_queue_write));
-        c->valid = 0;
-        c->dirty = 0;
-        if (AQueueRemove(&(c->l)) != QUEUE_SUCCESS)
-        {
-          return DFS_FAIL;
-        }
-      }
-    }
+//   // Added for bulk write ////////////////////////////////////////////
+//   if(not_translation != 0)
+//   {
+//     if(blocknum == last_blocknum_write + 1)
+//     {
+//       cur_wnd_write = ((cur_wnd_write * 2) > MAX_WND) ? MAX_WND : (cur_wnd_write * 2);
+//     }
+//     else 
+//     {
+//       cur_wnd_write = DEF_WND;
+//       while (!AQueueEmpty(&prefetch_queue_write)) {
+//         c = (cache_block *)AQueueObject(AQueueFirst(&prefetch_queue_write));
+//         c->valid = 0;
+//         c->dirty = 0;
+//         if (AQueueRemove(&(c->l)) != QUEUE_SUCCESS)
+//         {
+//           return DFS_FAIL;
+//         }
+//       }
+//     }
 
-    for(i = blocknum + 1; i <= blocknum + cur_wnd_write - 1; i++)
-    {
-      cache_handle_temp = DfsCacheAllocateSlot(i);
+//     for(i = blocknum + 1; i <= blocknum + cur_wnd_write - 1; i++)
+//     {
+//       cache_handle_temp = DfsCacheAllocateSlot(i);
 
-      if(cache_handle_temp == DFS_FAIL)
-      {
-        LockHandleRelease(cache_lock);
-        return DFS_FAIL;
-      }
+//       if(cache_handle_temp == DFS_FAIL)
+//       {
+//         LockHandleRelease(cache_lock);
+//         return DFS_FAIL;
+//       }
       
-      caches[cache_handle_temp].valid = 1;
-      caches[cache_handle_temp].dirty = 0;
-      caches[cache_handle_temp].blocknum = i;
-      caches[cache_handle_temp].timestamp = latency_time;
+//       caches[cache_handle_temp].valid = 1;
+//       caches[cache_handle_temp].dirty = 0;
+//       caches[cache_handle_temp].blocknum = i;
+//       caches[cache_handle_temp].timestamp = latency_time;
 
-      if ((caches[cache_handle_temp].l = AQueueAllocLink(&caches[cache_handle_temp])) == NULL)
-      {
-        return DFS_FAIL;
-      }
-      if (AQueueInsertLast(&prefetch_queue_write, caches[cache_handle_temp].l) != QUEUE_SUCCESS)
-      {
-        return DFS_FAIL;
-      }
-    }
-  }
-  /////////////////////////////////////////////////////////////////
-  miss_latency = (miss_latency * (num_total_access - num_hit - 1) + (caches[cache_handle].timestamp - latency_time)) / (num_total_access - num_hit);
-  miss_latency_int = (int)miss_latency;
-  hit_rate = (double)num_hit / (double)num_total_access * 100;
-  miss_rate = 100.0 - hit_rate;
-  printf("Cache Miss: Hit Rate = %.3f%%, Miss Rate = %.3f%%, ", hit_rate, miss_rate);
-  printf("Disk Reads = %d, Disk Writes = %d, Miss Handling Latency = %dms\n", num_disk_reads, num_disk_writes, miss_latency_int);
+//       if ((caches[cache_handle_temp].l = AQueueAllocLink(&caches[cache_handle_temp])) == NULL)
+//       {
+//         return DFS_FAIL;
+//       }
+//       if (AQueueInsertLast(&prefetch_queue_write, caches[cache_handle_temp].l) != QUEUE_SUCCESS)
+//       {
+//         return DFS_FAIL;
+//       }
+//     }
+//   }
+//   /////////////////////////////////////////////////////////////////
+//   miss_latency = (miss_latency * (num_total_access - num_hit - 1) + (caches[cache_handle].timestamp - latency_time)) / (num_total_access - num_hit);
+//   miss_latency_int = (int)miss_latency;
+//   hit_rate = (double)num_hit / (double)num_total_access * 100;
+//   miss_rate = 100.0 - hit_rate;
+//   printf("Cache Miss: Hit Rate = %.3f%%, Miss Rate = %.3f%%, ", hit_rate, miss_rate);
+//   printf("Disk Reads = %d, Disk Writes = %d, Miss Handling Latency = %dms\n", num_disk_reads, num_disk_writes, miss_latency_int);
   
-  if(LockHandleRelease(cache_lock) == SYNC_FAIL)
-  {
-    return DFS_FAIL;
-  }
+//   if(LockHandleRelease(cache_lock) == SYNC_FAIL)
+//   {
+//     return DFS_FAIL;
+//   }
 
-  if(not_translation != 0)
-  {
-    last_blocknum_write = blocknum;
-  }
-  return total_write;
-}
+//   if(not_translation != 0)
+//   {
+//     last_blocknum_write = blocknum;
+//   }
+//   return total_write;
+// }
 
-int DfsWriteBlockUncached(int blocknum, dfs_block *b){
+int DfsWriteBlock(int blocknum, dfs_block *b){
   int i;
   int physical_block_num = sb.block_size / DiskBytesPerBlock();
   int data_index;
@@ -1586,7 +1586,7 @@ int DfsCacheAllocateSlot(int blocknum) {
   {
     bcopy(caches[cache_dest].data, temp.data, sb.block_size);
 
-    if(DfsWriteBlockUncached(caches[cache_dest].blocknum, &temp) == DFS_FAIL)
+    if(DfsWriteBlock(caches[cache_dest].blocknum, &temp) == DFS_FAIL)
     {
       return DFS_FAIL;
     }
@@ -1617,7 +1617,7 @@ int DfsCacheFlush() {
     {
       bcopy(caches[i].data, temp.data, sb.block_size);
       
-      if(DfsWriteBlockUncached(caches[i].blocknum, &temp) == DFS_FAIL)
+      if(DfsWriteBlock(caches[i].blocknum, &temp) == DFS_FAIL)
       {
         LockHandleRelease(cache_lock);
         return DFS_FAIL;
