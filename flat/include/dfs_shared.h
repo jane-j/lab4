@@ -4,14 +4,15 @@
 typedef struct dfs_superblock {
   // STUDENT: put superblock internals here
   int valid;
-  uint32 fsBlockSize; //in bytes
-  uint32 numFsBlocks;
-  uint32 firstInodeBlock;
-  uint32 numInodes;
-  uint32 firstFBVBlock;
+  uint32 fs_block_size; //in bytes
+  uint32 num_fs_blocks;
+  uint32 inode_start_block;
+  uint32 num_inodes;
+  uint32 fbv_start_block;
 } dfs_superblock;
 
 #define DFS_BLOCKSIZE 1024  // Must be an integer multiple of the disk blocksize
+#define DFS_MAX_FILENAME_LENGTH 72
 
 typedef struct dfs_block {
   char data[DFS_BLOCKSIZE];
@@ -26,9 +27,9 @@ typedef struct dfs_inode {
   int inuse;
   uint32 fileSize;
   uint32 dirTransTable[10];
-  uint32 indirTransTableBase;
-  uint32 doubleIndirTransTableBase;
-  char fileName[72];
+  uint32 indirectBlock;
+  uint32 doubleIndirectBlock;
+  char filename[DFS_MAX_FILENAME_LENGTH];
 } dfs_inode;
 
 #define DFS_MAX_FILESYSTEM_SIZE 0x4000000  // 64MB

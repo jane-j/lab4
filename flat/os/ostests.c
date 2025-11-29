@@ -12,44 +12,89 @@ void print_dfs_block(dfs_block *b) {
   }
 }
 
+void FillBuffer(char *buf, int size, char c) {
+  int i;
+  for (i = 0; i < size; i++) buf[i] = c;
+}
+
 void RunOSTests() {
-  uint32 i,j,m;
-  int k;
-  dfs_block *b, *d;
+  int ret;
+  int h1, h2;
+  dfs_block block;
+  char smallbuf[37];
+  char readbuf[50];
 
-  // // STUDENT: run any os-level tests here
-  DfsModuleInit();
-  DfsPrintSuperblock();
-  // DfsReadDiskSuperblock();
-  // // DfsPrintInodeTable();
-  DfsPrintFBVBlocks();
+  // // // STUDENT: run any os-level tests here
 
-  i = DfsAllocateBlock();
-  printf("Allocated block %d\n",i);
-  //DfsPrintFBVBlocks();
-  j = DfsAllocateBlock();
-  printf("Allocated block %d\n",j);
-  // printf("out\n");
-  //DfsPrintFBVBlocks();
+  // ret = DfsReadBlock(95, &block);
+  // printf("ret %d\n", ret);
+  
+  printf("=== Testing Simple File Create ===\n");
+  h1 = DfsInodeOpen("file1.txt");
+  printf("Opened inode handle: %d\n", h1);
 
-  for(m = 0; m < DFS_BLOCKSIZE; m++) {
-    b->data[m] = 'e';
-  }
-  for(m = 0; m < 5; m++) {
-    printf("bdata[%d] = %c\n", m, b->data[m]);
-  }
+  printf("=== Writing Non-Block-Aligned Bytes ===\n");
+  FillBuffer(smallbuf, 40, 'A');
+  ret = DfsInodeWriteBytes(h1, smallbuf, 0, 40);
+  printf("Wrote %d bytes (expected 37)\n", ret);
 
-  k = DfsWriteBlock(j, b);
-  // if(k != DFS_BLOCKSIZE) printf("k != DFS_BLOCK\n");
+  // printf("=== Reading Back Non-Block-Aligned Data ===\n");
+  // bzero(readbuf, sizeof(readbuf));
+  // ret = DfsInodeReadBytes(h1, readbuf, 0, 37);
+  // printf("Read %d bytes: %.*s\n", ret, 37, readbuf);
 
-  // k = DfsReadBlock(j, d);
-  // if(k != DFS_BLOCKSIZE) printf("k read != DFS_BLOCK\n");
+  // printf("=== Testing Larger File (Indirect Blocks) ===\n");
+  // h2 = DfsInodeOpen("bigfile.bin");
+  // printf("Opened big file handle: %d\n", h2);
 
-  // print_dfs_block(d);
+  // // Allocate large buffer enough to enter indirect addressing
+  // int bigsize = 30000; // adjust > #direct blocks * block size
+  // char *bigbuf = malloc(bigsize);
+  // FillBuffer(bigbuf, bigsize, 'X');
 
-  // DfsFreeBlock(i);
-  // DfsFreeBlock(i);
-  // DfsFreeBlock(j);
+  // ret = DfsInodeWriteBytes(h2, bigbuf, 0, bigsize);
+  // printf("Wrote %d bytes to bigfile.bin\n", ret);
 
-  // DfsPrintFBVBlocks();
+  // printf("=== Reading Portion of Large File ===\n");
+  // char verifybuf[64];
+  // ret = DfsInodeReadBytes(h2, verifybuf, 15000, 64);
+  // printf("Read %d bytes from large file\n", ret);
+
+  // printf("=== Checking File Sizes ===\n");
+  // printf("file1.txt size = %d\n", DfsInodeFilesize(h1));
+  // printf("bigfile.bin size = %d\n", DfsInodeFilesize(h2));
+
+  // printf("=== Testing Block Allocation and Free ===\n");
+  // int newblk = DfsAllocateBlock();
+  // printf("Allocated block number: %d\n", newblk);
+
+  // printf("Writing something to new block\n");
+  // FillBuffer((char *)&block, sizeof(block), 'B');
+  // DfsWriteBlock(newblk, &block);
+
+  // printf("Reading back block\n");
+  // DfsReadBlock(newblk, &block);
+
+  // printf("Freeing allocated block\n");
+  // DfsFreeBlock(newblk);
+
+  // printf("=== Testing Delete File ===\n");
+  // ret = DfsInodeDelete(h1);
+  // printf("Deleted file1.txt result = %d\n", ret);
+
+  // printf("=== Closing File System ===\n");
+  // ret = DfsCloseFileSystem();
+  // printf("Close result: %d\n", ret);
+
+  // printf("=== Reopening to Test Persistence ===\n");
+  // DfsOpenFileSystem();
+  // int h3 = DfsInodeOpen("bigfile.bin");  // should exist
+  // printf("Persistence test handle: %d\n", h3);
+
+  // memset(readbuf, 0, sizeof(readbuf));
+  // ret = DfsInodeReadBytes(h3, readbuf, 0, 20);
+  // printf("Read after restart: %.*s\n", ret, readbuf);
+
+  // printf("=== End of Tests ===\n");
+  // return 0;
 }

@@ -21,7 +21,7 @@ void main (int argc, char *argv[])
 {
 	// STUDENT: put your code here. Follow the guidelines below. They are just the main steps. 
 	// You need to think of the finer details. You can use bzero() to zero out bytes in memory
-  int i, j;
+  int i;
   int end_idx, end_pos; //for fbv set up
   char * src;
   dfs_block b;
@@ -85,17 +85,19 @@ void main (int argc, char *argv[])
   }
 
   // Finally, setup superblock as valid filesystem and write superblock and boot record to disk:
-  sb.fsBlockSize = DFS_BLOCKSIZE;
-  sb.numFsBlocks = num_filesystem_blocks;
-  sb.firstInodeBlock = FDISK_INODE_BLOCK_START;
-  sb.numInodes = DFS_INODE_MAX_NUM;
-  sb.firstFBVBlock = FDISK_FBV_BLOCK_START;
+  sb.fs_block_size = DFS_BLOCKSIZE;
+  sb.num_fs_blocks = num_filesystem_blocks;
+  sb.inode_start_block = FDISK_INODE_BLOCK_START;
+  sb.num_inodes = DFS_INODE_MAX_NUM;
+  sb.fbv_start_block = FDISK_FBV_BLOCK_START;
   sb.valid = 1;
 
   bzero(b.data, DFS_BLOCKSIZE);
   FdiskWriteBlock(FDISK_BOOT_FILESYSTEM_BLOCKNUM, &b);
 
-  bcopy((char *)&sb, b.data, DFS_BLOCKSIZE);
+  bcopy((char *)&sb, b.data, sizeof(sb));
+  bcopy(b.data, (char *)&sb, DFS_BLOCKSIZE);
+  Printf("sb valid = %d\n", sb.valid);
   FdiskWriteBlock(FDISK_SUPERBLOCK_BLOCKNUM, &b);
   FdiskWriteBlock(FDISK_REDUNDANT_SUPERBLOCK, &b);
   Printf("fdisk (%d): Formatted DFS disk for %d bytes.\n", getpid(), disksize);
