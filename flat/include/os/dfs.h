@@ -2,37 +2,50 @@
 #define __DFS_H__
 
 #include "dfs_shared.h"
+#include "queue.h"
 
-#define DFS_SUPERBLOCK_PHYBLOCKNUM 4
+typedef struct cache_block { 
+  char valid;
+  char dirty;
+  double timestamp;
+  int blocknum; 
+  char data[DFS_BLOCKSIZE];
+  Link *l;
+} cache_block;
 
-static inline uint32 invert(uint32 n);
+#define CACHE_SIZE 128
+// #define CACHE_SLOT_SIZE 1
+#define CACHE_WAYS CACHE_SIZE
+// #define CACHE_SETS ((CACHE_SIZE / CACHE_WAYS) / CACHE_SLOT_SIZE)
+#define CACHE_SETS (CACHE_SIZE / CACHE_WAYS)
+// #define CACHE_SLOT_MASK CACHE_SLOT_SIZE - 1
+#define CACHE_IDX_MASK (CACHE_SETS - 1)
+#define CACHE_TAG_MASK (0xFFFFFFFF - CACHE_IDX_MASK)
+#define MAX_WND 64
+#define DEF_WND 8
 
 void DfsModuleInit();
 void DfsInvalidate();
 int DfsOpenFileSystem();
 int DfsCloseFileSystem();
 int DfsAllocateBlock();
-int DfsFreeBlock(uint32);
-int DfsReadBlock(uint32, dfs_block *);
-int DfsWriteBlock(uint32, dfs_block *);
-
-uint32 DfsInodeFilenameExists(char *);
-uint32 DfsInodeOpen(char *);
-int DfsInodeDelete(uint32);
-int DfsInodeReadBytes(uint32, void *, int, int);
-int DfsInodeWriteBytes(uint32, void *, int, int);
-uint32 DfsInodeFilesize(uint32);
-uint32 DfsInodeAllocateVirtualBlock(uint32, uint32);
-uint32 DfsInodeTranslateVirtualToFilesys(uint32, uint32);
-
-void DfsPrintSuperblock();
-void DfsPrintInode(dfs_inode *);
-void DfsPrintInodeTable();
-void DfsPrintFBVBlocks();
-void DfsReadDiskSuperblock();
-
-int compare_strings(char *str1, char *str2);
-
-#define DFS_DIR_TRANS_TABLE_SIZE 10
+int DfsFreeBlock(int blocknum);
+int DfsReadBlock(int blocknum, dfs_block *b);
+int DfsWriteBlock(int blocknum, dfs_block *b);
+int DfsInodeFilenameExists(char *filename);
+int DfsInodeOpen(char *filename);
+int DfsInodeDelete(int handle);
+int DfsInodeReadBytes(int handle, void *mem, int start_byte, int num_bytes);
+int DfsInodeWriteBytes(int handle, void *mem, int start_byte, int num_bytes);
+int DfsInodeFilesize(int handle);
+int DfsInodeAllocateVirtualBlock(int handle, int virtual_blocknum);
+int DfsInodeTranslateVirtualToFilesys(int handle, int virtual_blocknum);
+int DfsInodeRename(char *oldname, char *newname);
+int DfsReadBlockUncached(int blocknum, dfs_block *b);
+int DfsWriteBlockUncached(int blocknum, dfs_block *b);
+int DfsCacheHit(int blocknum);
+int DfsCacheAllocateSlot(int blocknum);
+int DfsCacheFlush();
+int DfsCacheReplacePolicy(int blocknum);
 
 #endif
