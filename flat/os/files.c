@@ -8,33 +8,31 @@
 // You have already been told about the most likely places where you should use locks. You may use 
 // additional locks if it is really necessary.
 static file_descriptor files[DFS_INODE_MAX_NUM]; // all files
-lock_t file_lock;
+lock_t files_lock;
 
 // STUDENT: put your file-level functions here
 
 void FileModuleInit() {
-    int idx;
-    file_lock = LockCreate();
+    int i;
+    files_lock = LockCreate();
     
     // Initialize all file descriptors to invalid state
-    for (idx = 0; idx < DFS_INODE_MAX_NUM; idx++) {
-        files[idx].valid = 0;
-        files[idx].inode_handle = -1;
-        files[idx].current_offset = 0;
-        files[idx].end_of_file = 0;
-        files[idx].mode = 0;
-        files[idx].pid = -1;
-        bzero(files[idx].filename, FILE_MAX_FILENAME_LENGTH);
+    for (i = 0; i < DFS_INODE_MAX_NUM; i++) {
+        files[i].inuse = 0;
+        files[i].inode_handle = -1;
+        files[i].current_pos = 0;
+        files[i].eof = 0;
+        files[i].mode = 0;
+        files[i].pid = -1;
+        bzero(files[i].filename, FILE_MAX_FILENAME_LENGTH);
     }
 }
 
 int FileNameExists(char *filename) {
-    int idx;
-    
-    // Search through all file descriptors for matching filename
-    for(idx = 0; idx < DFS_INODE_MAX_NUM; idx++) {
-        if(files[idx].valid && dstrncmp(files[idx].filename, filename, FILE_MAX_FILENAME_LENGTH) == 0) {
-            return idx;
+    int i;
+    for(i = 0; i < DFS_INODE_MAX_NUM; i++) {
+        if(files[i].inuse && (dstrncmp(files[i].filename, filename, FILE_MAX_FILENAME_LENGTH) == 0)) {
+            return i;
         }
     }
     
@@ -42,44 +40,51 @@ int FileNameExists(char *filename) {
 }
 
 int FileOpen(char *filename, char *mode) {
-    int idx;
+    int i;
     int inode_h = DfsInodeFilenameExists(filename);
     int file_h = FileNameExists(filename);
-    int fname_len = dstrlen(filename);
+    int len = dstrlen(filename);
 
-    // Check if file is already open
+    // Check if already open
     if(file_h != FILE_FAIL) {
         return FILE_FAIL;
     }
 
-    // Handle read mode
+    //read mode
     if(dstrncmp(mode, "r", 1) == 0) {
-        // File must exist for reading
         if(inode_h == DFS_FAIL) {
             return FILE_FAIL;
         }
 
-        // Lock and find free descriptor
-        if(LockHandleAcquire(file_lock) != SYNC_SUCCESS) {
+        // find free descriptor
+        if(LockHandleAcquire(files_lock) != SYNC_SUCCESS) {
             return FILE_FAIL;
         }
 
-        for(idx = 0; idx < DFS_INODE_MAX_NUM; idx++) {
-            if(!files[idx].valid) {
-                files[idx].valid = 1;
-                files[idx].inode_handle = inode_h;
-                files[idx].current_offset = 0;
-                files[idx].end_of_file = 0;
-                files[idx].mode = 'r';
-                files[idx].pid = GetCurrentPid();
-                dstrncpy(files[idx].filename, filename, fname_len);
-                
-                LockHandleRelease(file_lock);
-                return idx;
+        for(i = 0; i < DFS_INODE_MAX_NUM; i++) {
+            if(!files[i].inuse) {
+                files[i].inuse = 1;
+                files[i].inode_handle = inode_h;
+                files[i].current_pos = 0;
+                files[i].eof = 0;
+                files[i].mode = 'r';
+                files[i].pid = GetCurrentPid();
+                dstrncpy(files[i].filename, filename, len);
+                if(LockHandleRelease(files_lock) != SYNC_SUCCESS)
+                {
+                    files[i].inuse = 0;
+                    files[i].inode_handle = -1;
+                    files[i].current_pos = 0;
+                    files[i].eof = 0;
+                    files[i].mode = 0;
+                    files[i].pid = -1;
+                    bzero(files[i].filename, FILE_MAX_FILENAME_LENGTH);
+                    return FILE_FAIL;
+                }
+                return i;
             }
         }
-
-        LockHandleRelease(file_lock);
+        LockHandleRelease(files_lock);
         return FILE_FAIL;
     }
     // Handle write mode
@@ -90,34 +95,40 @@ int FileOpen(char *filename, char *mode) {
                 return FILE_FAIL;
             }
         }
-
         // Create new inode
         inode_h = DfsInodeOpen(filename);
         if(inode_h == DFS_FAIL) {
             return FILE_FAIL;
         }
-
-        // Lock and find free descriptor
-        if(LockHandleAcquire(file_lock) != SYNC_SUCCESS) {
+        // Find free descriptor
+        if(LockHandleAcquire(files_lock) != SYNC_SUCCESS) {
             return FILE_FAIL;
         }
-
-        for(idx = 0; idx < DFS_INODE_MAX_NUM; idx++) {
-            if(!files[idx].valid) {
-                files[idx].valid = 1;
-                files[idx].inode_handle = inode_h;
-                files[idx].current_offset = 0;
-                files[idx].end_of_file = 1;
-                files[idx].mode = 'w';
-                files[idx].pid = GetCurrentPid();
-                dstrncpy(files[idx].filename, filename, fname_len);
-                
-                LockHandleRelease(file_lock);
-                return idx;
+        for(i = 0; i < DFS_INODE_MAX_NUM; i++) {
+            if(!files[i].inuse) {
+                files[i].inuse = 1;
+                files[i].inode_handle = inode_h;
+                files[i].current_pos = 0;
+                files[i].eof = 1;
+                files[i].mode = 'w';
+                files[i].pid = GetCurrentPid();
+                dstrncpy(files[i].filename, filename, len);
+                if(LockHandleRelease(files_lock) != SYNC_SUCCESS)
+                {
+                    files[i].inuse = 0;
+                    files[i].inode_handle = -1;
+                    files[i].current_pos = 0;
+                    files[i].eof = 0;
+                    files[i].mode = 0;
+                    files[i].pid = -1;
+                    bzero(files[i].filename, FILE_MAX_FILENAME_LENGTH);
+                    return FILE_FAIL;
+                }
+                return i;
             }
         }
 
-        LockHandleRelease(file_lock);
+        LockHandleRelease(files_lock);
         return FILE_FAIL;
     }
     // Handle append mode
@@ -131,32 +142,42 @@ int FileOpen(char *filename, char *mode) {
         }
 
         // Lock and find free descriptor
-        if(LockHandleAcquire(file_lock) != SYNC_SUCCESS) {
+        if(LockHandleAcquire(files_lock) != SYNC_SUCCESS) {
             return FILE_FAIL;
         }
 
-        for(idx = 0; idx < DFS_INODE_MAX_NUM; idx++) {
-            if(!files[idx].valid) {
+        for(i = 0; i < DFS_INODE_MAX_NUM; i++) {
+            if(!files[i].inuse) {
                 int file_sz = DfsInodeFilesize(inode_h);
                 if(file_sz == DFS_FAIL) {
-                    LockHandleRelease(file_lock);
+                    LockHandleRelease(files_lock);
                     return FILE_FAIL;
                 }
                 
-                files[idx].valid = 1;
-                files[idx].inode_handle = inode_h;
-                files[idx].current_offset = file_sz;
-                files[idx].end_of_file = 1;
-                files[idx].mode = 'a';
-                files[idx].pid = GetCurrentPid();
-                dstrncpy(files[idx].filename, filename, fname_len);
+                files[i].inuse = 1;
+                files[i].inode_handle = inode_h;
+                files[i].current_pos = file_sz;
+                files[i].eof = 1;
+                files[i].mode = 'a';
+                files[i].pid = GetCurrentPid();
+                dstrncpy(files[i].filename, filename, len);
                 
-                LockHandleRelease(file_lock);
-                return idx;
+                if(LockHandleRelease(files_lock) != SYNC_SUCCESS)
+                {
+                    files[i].inuse = 0;
+                    files[i].inode_handle = -1;
+                    files[i].current_pos = 0;
+                    files[i].eof = 0;
+                    files[i].mode = 0;
+                    files[i].pid = -1;
+                    bzero(files[i].filename, FILE_MAX_FILENAME_LENGTH);
+                    return FILE_FAIL;
+                }
+                return i;
             }
         }
 
-        LockHandleRelease(file_lock);
+        LockHandleRelease(files_lock);
         return FILE_FAIL;
     }
 
@@ -164,27 +185,27 @@ int FileOpen(char *filename, char *mode) {
 }
 
 int FileClose(int handle) {
-    int curr_pid = GetCurrentPid();
+    int pid = GetCurrentPid();
 
     // Validate handle
     if(handle < 0 || handle >= DFS_INODE_MAX_NUM) {
         return FILE_FAIL;
     }
 
-    if(!files[handle].valid) {
+    if(!files[handle].inuse) {
         return FILE_FAIL;
     }
 
     // Check ownership
-    if(curr_pid != files[handle].pid) {
+    if(pid != files[handle].pid) {
         return FILE_FAIL;
     }
 
     // Reset file descriptor
-    files[handle].valid = 0;
+    files[handle].inuse = 0;
     files[handle].inode_handle = -1;
-    files[handle].current_offset = 0;
-    files[handle].end_of_file = 0;
+    files[handle].current_pos = 0;
+    files[handle].eof = 0;
     files[handle].mode = 0;
     files[handle].pid = -1;
     bzero(files[handle].filename, FILE_MAX_FILENAME_LENGTH);
@@ -193,8 +214,8 @@ int FileClose(int handle) {
 }
 
 int FileRead(int handle, void *mem, int num_bytes) {
-    int curr_pid = GetCurrentPid();
-    int file_sz;
+    int pid = GetCurrentPid();
+    int filesize;
     int bytes_to_read;
     int result;
 
@@ -208,52 +229,53 @@ int FileRead(int handle, void *mem, int num_bytes) {
         return FILE_FAIL;
     }
 
-    if(!files[handle].valid) {
+    //Check if its in use
+    if(!files[handle].inuse) {
         return FILE_FAIL;
     }
 
     // Check ownership
-    if(curr_pid != files[handle].pid) {
+    if(pid != files[handle].pid) {
         return FILE_FAIL;
     }
 
-    // Check mode - can only read in 'r' or 'a' mode
+    // Check mode
     if(files[handle].mode != 'r' && files[handle].mode != 'a') {
         return FILE_FAIL;
     }
 
     // Check if already at EOF
-    if(files[handle].end_of_file) {
+    if(files[handle].eof) {
         return FILE_FAIL;
     }
 
     // Get file size and adjust bytes to read
-    file_sz = DfsInodeFilesize(files[handle].inode_handle);
-    if(file_sz == DFS_FAIL) {
+    filesize = DfsInodeFilesize(files[handle].inode_handle);
+    if(filesize == DFS_FAIL) {
         return FILE_FAIL;
     }
 
     // Calculate actual bytes to read
     bytes_to_read = num_bytes;
-    if(files[handle].current_offset + num_bytes >= file_sz) {
-        bytes_to_read = file_sz - files[handle].current_offset;
-        files[handle].end_of_file = 1;
+    if(files[handle].current_pos + num_bytes >= filesize) {
+        bytes_to_read = filesize - files[handle].current_pos;
+        files[handle].eof = 1;
     }
 
-    // Perform read
-    result = DfsInodeReadBytes(files[handle].inode_handle, mem, files[handle].current_offset, bytes_to_read);
+    // Read
+    result = DfsInodeReadBytes(files[handle].inode_handle, mem, files[handle].current_pos, bytes_to_read);
     if(result == DFS_FAIL) {
         return FILE_FAIL;
     }
 
     // Update offset
-    files[handle].current_offset += bytes_to_read;
+    files[handle].current_pos += bytes_to_read;
     return bytes_to_read;
 }
 
 int FileWrite(int handle, void *mem, int num_bytes) {
-    int curr_pid = GetCurrentPid();
-    int file_sz;
+    int pid = GetCurrentPid();
+    int filesize;
     int result;
 
     // Validate handle
@@ -266,12 +288,13 @@ int FileWrite(int handle, void *mem, int num_bytes) {
         return FILE_FAIL;
     }
 
-    if(!files[handle].valid) {
+    //Check if its in use
+    if(!files[handle].inuse) {
         return FILE_FAIL;
     }
 
     // Check ownership
-    if(curr_pid != files[handle].pid) {
+    if(pid != files[handle].pid) {
         return FILE_FAIL;
     }
 
@@ -280,29 +303,29 @@ int FileWrite(int handle, void *mem, int num_bytes) {
         return FILE_FAIL;
     }
 
-    // Perform write
-    result = DfsInodeWriteBytes(files[handle].inode_handle, mem, files[handle].current_offset, num_bytes);
+    //Write
+    result = DfsInodeWriteBytes(files[handle].inode_handle, mem, files[handle].current_pos, num_bytes);
     if(result == DFS_FAIL) {
         return FILE_FAIL;
     }
 
     // Update offset and EOF status
-    files[handle].current_offset += num_bytes;
+    files[handle].current_pos += num_bytes;
     
-    file_sz = DfsInodeFilesize(files[handle].inode_handle);
-    if(file_sz == DFS_FAIL) {
+    filesize = DfsInodeFilesize(files[handle].inode_handle);
+    if(filesize == DFS_FAIL) {
         return FILE_FAIL;
     }
 
     // Update EOF flag
-    files[handle].end_of_file = (files[handle].current_offset >= file_sz) ? 1 : 0;
+    files[handle].eof = (files[handle].current_pos >= filesize) ? 1 : 0;
     
     return num_bytes;
 }
 
 int FileSeek(int handle, int num_bytes, int from_where) {
-    int file_sz;
-    int curr_pid = GetCurrentPid();
+    int filesize;
+    int pid = GetCurrentPid();
     int new_offset;
 
     // Validate handle
@@ -310,43 +333,44 @@ int FileSeek(int handle, int num_bytes, int from_where) {
         return FILE_FAIL;
     }
 
-    if(!files[handle].valid) {
+    // Check if its in use
+    if(!files[handle].inuse) {
         return FILE_FAIL;
     }
 
     // Check ownership
-    if(curr_pid != files[handle].pid) {
+    if(pid != files[handle].pid) {
         return FILE_FAIL;
     }
 
     // Get file size
-    file_sz = DfsInodeFilesize(files[handle].inode_handle);
-    if(file_sz == DFS_FAIL) {
+    filesize = DfsInodeFilesize(files[handle].inode_handle);
+    if(filesize == DFS_FAIL) {
         return FILE_FAIL;
     }
 
-    // Calculate new offset based on from_where
+    // Calculate new offset based on 'from_where'
     if(from_where == FILE_SEEK_SET) {
         new_offset = num_bytes;
     }
     else if(from_where == FILE_SEEK_CUR) {
-        new_offset = files[handle].current_offset + num_bytes;
+        new_offset = files[handle].current_pos + num_bytes;
     }
     else if(from_where == FILE_SEEK_END) {
-        new_offset = file_sz + num_bytes;
+        new_offset = filesize + num_bytes;
     }
     else {
         return FILE_FAIL;
     }
 
     // Validate new offset
-    if(new_offset < 0 || new_offset > file_sz) {
+    if(new_offset < 0 || new_offset > filesize) {
         return FILE_FAIL;
     }
 
     // Update offset and clear EOF
-    files[handle].current_offset = new_offset;
-    files[handle].end_of_file = 0;
+    files[handle].current_pos = new_offset;
+    files[handle].eof = 0;
     
     return FILE_SUCCESS;
 }
@@ -377,7 +401,7 @@ int FileDelete(char *filename) {
 }
 
 int FileRename(char *oldname, char *newname) {
-    int old_file_h;
+    int file_h;
     int newname_len = dstrlen(newname);
 
     // Check that new name doesn't already exist
@@ -391,14 +415,19 @@ int FileRename(char *oldname, char *newname) {
     }
 
     // Update file descriptor if file is open
-    old_file_h = FileNameExists(oldname);
-    if(old_file_h == FILE_FAIL) {
+    file_h = FileNameExists(oldname);
+    if(file_h == FILE_FAIL) {
         return FILE_FAIL;
     }
 
+    if(newname_len > FILE_MAX_FILENAME_LENGTH)
+    {
+        newname_len = FILE_MAX_FILENAME_LENGTH;
+    }
+
     // Update filename in descriptor
-    bzero(files[old_file_h].filename, FILE_MAX_FILENAME_LENGTH);
-    dstrncpy(files[old_file_h].filename, newname, newname_len);
+    bzero(files[file_h].filename, FILE_MAX_FILENAME_LENGTH);
+    dstrncpy(files[file_h].filename, newname, newname_len);
     
     return FILE_SUCCESS;
 }

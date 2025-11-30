@@ -10,14 +10,14 @@
 static dfs_superblock sb; // superblock
 static dfs_inode inodes[DFS_INODE_MAX_NUM]; // all inodes
 static uint32 fbv[DFS_FBV_MAX_NUM_WORDS]; // Free block vector
-static cache_block caches[CACHE_SIZE]; // cache blocks
+static cache_block cache[CACHE_SIZE]; // cache blocks
 
 ////////////////////////////////////////////
 
 static int num_disk_reads;
 static int num_disk_writes;
-static int num_hit;
-static int num_total_access;
+static int num_hits;
+static int num_total_accesses;
 static double miss_latency;
 
 //////////////////////////////////////////////
@@ -68,18 +68,18 @@ void DfsModuleInit() {
 
   num_disk_reads = 0;
   num_disk_writes = 0;
-  num_hit = 0;
-  num_total_access = 0;
+  num_hits = 0;
+  num_total_accesses = 0;
   miss_latency = 0.0;
 
   for(i = 0; i < CACHE_SIZE; i++)
   {
-    caches[i].valid = 0;
-    caches[i].dirty = 0;
-    caches[i].timestamp = 0;
-    caches[i].blocknum = 0; 
-    bzero(caches[i].data, DFS_BLOCKSIZE);
-    caches[i].l = NULL;
+    cache[i].valid = 0;
+    cache[i].dirty = 0;
+    cache[i].timestamp = 0;
+    cache[i].blocknum = 0; 
+    bzero(cache[i].data, DFS_BLOCKSIZE);
+    cache[i].l = NULL;
   }
 
   last_blocknum_read = -1;
@@ -127,60 +127,61 @@ int DfsOpenFileSystem() {
 // Read free block vector
 // Change superblock to be invalid, write back to disk, then change 
 // it back to be valid in memory
-  int disk_block_size;
-  int dfs_block_size;
-  disk_block new_disk_block;
-  dfs_block new_dfs_block;
-  int i;
-  int fbv_block_num;
+  disk_block temp_db;
+  dfs_block temp_b;
+  int i, retval;
 
   if(sb.valid == 1)
   {
     return DFS_FAIL;
   }
 
-  disk_block_size = DiskReadBlock(1 * (DFS_BLOCKSIZE / DiskBytesPerBlock()), &new_disk_block);
+  //Read superblock
+  retval = DiskReadBlock(DFS_SUPERBLOCK_PHY_BLOCKNUM, &temp_db);
 
-  if(disk_block_size == DISK_FAIL)
+  if(retval == DISK_FAIL)
   {
     return DFS_FAIL;
   }
 
-  bcopy(new_disk_block.data, (char *)&sb, sizeof(dfs_superblock));
+  bcopy(temp_db.data, (char *)&sb, sizeof(dfs_superblock));
 
-  for(i = sb.start_block_inode; i <= sb.start_block_fbv - 1; i++)
+  //Read inodes
+  for(i = sb.start_block_inode; i < sb.start_block_fbv; i++)
   {
-    dfs_block_size = DfsReadBlock(i, &new_dfs_block);
+    retval = DfsReadBlock(i, &temp_b);
 
-    if(dfs_block_size == DFS_FAIL)
+    if(retval == DFS_FAIL)
     {
         return DFS_FAIL;
     }
 
-    bcopy(new_dfs_block.data, (char *)(inodes + ((i - sb.start_block_inode) * (sb.block_size / 128))), sb.block_size);
+    bcopy(temp_b.data, (char *)(inodes + ((i - sb.start_block_inode) * (sb.fs_blocksize / sizeof(dfs_inode)))), sb.fs_blocksize);
   }
 
-  fbv_block_num = (sb.num_block / 8) / sb.block_size;
-
-  for(i = sb.start_block_fbv; i <= sb.start_block_fbv + fbv_block_num - 1; i++)
+  for(i = sb.start_block_fbv; i < sb.start_block_data; i++)
   {
-    dfs_block_size = DfsReadBlock(i, &new_dfs_block);
+    retval = DfsReadBlock(i, &temp_b);
     
-    if(dfs_block_size == DFS_FAIL)
+    if(retval == DFS_FAIL)
     {
         return DFS_FAIL;
     }
 
-    bcopy(new_dfs_block.data, (char *)(fbv + ((i - sb.start_block_fbv) * (sb.block_size / 4))), sb.block_size);
+    bcopy(temp_b.data, (char *)(fbv + ((i - sb.start_block_fbv) * (sb.fs_blocksize / 4))), sb.fs_blocksize);
   }
 
   DfsInvalidate();
 
-  bzero(new_disk_block.data, DiskBytesPerBlock());
-  bcopy((char *)&sb, new_disk_block.data, sizeof(dfs_superblock));
-  disk_block_size = DiskWriteBlock(1 * (sb.block_size / DiskBytesPerBlock()), &new_disk_block);
-
-  if(disk_block_size == DISK_FAIL)
+  bzero(temp_db.data, DiskBytesPerBlock());
+  bcopy((char *)&sb, temp_db.data, sizeof(dfs_superblock));
+  retval = DiskWriteBlock(DFS_SUPERBLOCK_PHY_BLOCKNUM, &temp_db);
+  if(retval == DISK_FAIL)
+  {
+    return DFS_FAIL;
+  }
+  retval = DiskWriteBlock(DFS_REDUNDANT_SB_PHY_BLOCKNUM, &temp_db);
+  if(retval == DISK_FAIL)
   {
     return DFS_FAIL;
   }
@@ -199,54 +200,48 @@ int DfsOpenFileSystem() {
 //-------------------------------------------------------------------
 
 int DfsCloseFileSystem() {
-  int disk_block_size;
-  int dfs_block_size;
-  disk_block new_disk_block;
-  dfs_block new_dfs_block;
+  int retval;
+  disk_block temp_db;
+  dfs_block temp_b;
   int i;
-  int fbv_block_num;
-    
+
   if(sb.valid == 0)
   {
     return DFS_FAIL;
   }
 
-  for(i = sb.start_block_inode; i <= sb.start_block_fbv - 1; i++)
+  for(i = sb.start_block_inode; i < sb.start_block_fbv; i++)
   {
-    bcopy((char *)(inodes + ((i - sb.start_block_inode) * (sb.block_size / 128))), new_dfs_block.data, sb.block_size);
-    dfs_block_size = DfsWriteBlock(i, &new_dfs_block);
+    bcopy((char *)(inodes + ((i - sb.start_block_inode) * (sb.fs_blocksize / sizeof(dfs_inode)))), temp_b.data, sb.fs_blocksize);
+    retval = DfsWriteBlock(i, &temp_b);
 
-    if(dfs_block_size == DFS_FAIL)
+    if(retval == DFS_FAIL)
     {
       return DFS_FAIL;
     }
   }
 
-  fbv_block_num = (sb.num_block / 8) / sb.block_size;
-  
-  for(i = sb.start_block_fbv; i <= sb.start_block_fbv + fbv_block_num - 1; i++)
+  for(i = sb.start_block_fbv; i < sb.start_block_data; i++)
   {
-    bcopy((char *)(fbv + ((i - sb.start_block_fbv) * (sb.block_size / 4))), new_dfs_block.data, sb.block_size);
-    dfs_block_size = DfsWriteBlock(i, &new_dfs_block);
+    bcopy((char *)(fbv + ((i - sb.start_block_fbv) * (sb.fs_blocksize / 4))), temp_b.data, sb.fs_blocksize);
+    retval = DfsWriteBlock(i, &temp_b);
     
-    if(dfs_block_size == DFS_FAIL)
+    if(retval == DFS_FAIL)
     {
       return DFS_FAIL;
     }
   }
   
-  bzero(new_disk_block.data, DiskBytesPerBlock());
-  bcopy((char *)&sb, new_disk_block.data, sizeof(dfs_superblock));
-  disk_block_size = DiskWriteBlock(1 * (sb.block_size / DiskBytesPerBlock()), &new_disk_block);
-
-  if(disk_block_size == DISK_FAIL)
+  bzero(temp_db.data, DiskBytesPerBlock());
+  bcopy((char *)&sb, temp_db.data, sizeof(dfs_superblock));
+  retval = DiskWriteBlock(DFS_SUPERBLOCK_PHY_BLOCKNUM, &temp_db);
+  if(retval == DISK_FAIL)
   {
     return DFS_FAIL;
   }
 
-  disk_block_size = DiskWriteBlock(65535 * (sb.block_size / DiskBytesPerBlock()), &new_disk_block);
-
-  if(disk_block_size == DISK_FAIL)
+  retval = DiskWriteBlock(DFS_REDUNDANT_SB_PHY_BLOCKNUM, &temp_db);
+  if(retval == DISK_FAIL)
   {
     return DFS_FAIL;
   }
@@ -272,7 +267,7 @@ int DfsAllocateBlock() {
 // Return handle to block
   int i = 0;
   int j = 0;
-  uint32 fbv_temp;
+  uint32 temp;
 
   if(sb.valid == 0)
   {
@@ -288,12 +283,12 @@ int DfsAllocateBlock() {
     if(fbv[i] != 0) {
       for(j = 0; j <= 31; j++) {
         if((fbv[i] >> j) & 0x1) {
-          fbv_temp = fbv[i];
+          temp = fbv[i];
           fbv[i] = fbv[i] & invert(0x1 << j);
 
           if(LockHandleRelease(fbv_lock) == SYNC_FAIL)
           {
-            fbv[i] = fbv_temp;
+            fbv[i] = temp;
             return DFS_FAIL;
           }
 
@@ -346,10 +341,10 @@ int DfsFreeBlock(int blocknum) {
 
   for(idx = 0; idx <= CACHE_SIZE - 1; idx++)
   {
-    if(caches[idx].valid == 1 && caches[idx].blocknum == blocknum)
+    if(cache[idx].valid == 1 && cache[idx].blocknum == blocknum)
     {
-      caches[idx].valid = 0;
-      caches[idx].dirty = 0;
+      cache[idx].valid = 0;
+      cache[idx].dirty = 0;
       break;
     }
   } 
@@ -406,9 +401,9 @@ int DfsFreeBlock(int blocknum) {
   
 //   if(cache_handle != DFS_FAIL)
 //   {
-//     bcopy(caches[cache_handle].data, b->data, sb.block_size);
-//     caches[cache_handle].timestamp = ClkGetCurTime();
-//     AQueueRemove(&(caches[cache_handle].l));
+//     bcopy(cache[cache_handle].data, b->data, sb.fs_blocksize);
+//     cache[cache_handle].timestamp = ClkGetCurTime();
+//     AQueueRemove(&(cache[cache_handle].l));
 
 //     if(LockHandleRelease(cache_lock) == SYNC_FAIL)
 //     {
@@ -419,7 +414,7 @@ int DfsFreeBlock(int blocknum) {
 //     {
 //       last_blocknum_read = blocknum;
 //     }
-//     return sb.block_size;
+//     return sb.fs_blocksize;
 //   }
   
 //   latency_time = ClkGetCurTime();
@@ -440,11 +435,11 @@ int DfsFreeBlock(int blocknum) {
 //     return DFS_FAIL;
 //   }
   
-//   caches[cache_handle].valid = 1;
-//   caches[cache_handle].dirty = 0;
-//   caches[cache_handle].blocknum = blocknum;
-//   bcopy(b->data, caches[cache_handle].data, sb.block_size);
-//   caches[cache_handle].timestamp = ClkGetCurTime();
+//   cache[cache_handle].valid = 1;
+//   cache[cache_handle].dirty = 0;
+//   cache[cache_handle].blocknum = blocknum;
+//   bcopy(b->data, cache[cache_handle].data, sb.fs_blocksize);
+//   cache[cache_handle].timestamp = ClkGetCurTime();
 
 //   // Added for bulk read ////////////////////////////////////////////
 //   if(not_translation != 0)
@@ -483,27 +478,27 @@ int DfsFreeBlock(int blocknum) {
 //         return DFS_FAIL;
 //       }
       
-//       caches[cache_handle_temp].valid = 1;
-//       caches[cache_handle_temp].dirty = 0;
-//       caches[cache_handle_temp].blocknum = i;
-//       bcopy(temp->data, caches[cache_handle_temp].data, sb.block_size);
-//       caches[cache_handle_temp].timestamp = latency_time;
+//       cache[cache_handle_temp].valid = 1;
+//       cache[cache_handle_temp].dirty = 0;
+//       cache[cache_handle_temp].blocknum = i;
+//       bcopy(temp->data, cache[cache_handle_temp].data, sb.fs_blocksize);
+//       cache[cache_handle_temp].timestamp = latency_time;
 
-//       if ((caches[cache_handle_temp].l = AQueueAllocLink(&caches[cache_handle_temp])) == NULL)
+//       if ((cache[cache_handle_temp].l = AQueueAllocLink(&cache[cache_handle_temp])) == NULL)
 //       {
 //         return DFS_FAIL;
 //       }
-//       if (AQueueInsertLast(&prefetch_queue_read, caches[cache_handle_temp].l) != QUEUE_SUCCESS)
+//       if (AQueueInsertLast(&prefetch_queue_read, cache[cache_handle_temp].l) != QUEUE_SUCCESS)
 //       {
 //         return DFS_FAIL;
 //       }
 //     }
 //   }
 //   /////////////////////////////////////////////////////////////////
-//   miss_latency = miss_latency + ((caches[cache_handle].timestamp - latency_time) - miss_latency) / (num_total_access - num_hit);
-//   // miss_latency = (miss_latency * (num_total_access - num_hit - 1) + (caches[cache_handle].timestamp - latency_time)) / (num_total_access - num_hit);
+//   miss_latency = miss_latency + ((cache[cache_handle].timestamp - latency_time) - miss_latency) / (num_total_accesses - num_hits);
+//   // miss_latency = (miss_latency * (num_total_accesses - num_hits - 1) + (cache[cache_handle].timestamp - latency_time)) / (num_total_accesses - num_hits);
 //   miss_latency_int = (int)miss_latency;
-//   hit_rate = (double)num_hit / (double)num_total_access * 100;
+//   hit_rate = (double)num_hits / (double)num_total_accesses * 100;
 //   miss_rate = 100.0 - hit_rate;
 //   printf("Cache Miss: Hit Rate = %.3f%%, Miss Rate = %.3f%%, ", hit_rate, miss_rate);
 //   printf("Disk Reads = %d, Disk Writes = %d, Miss Handling Latency = %dms\n", num_disk_reads, num_disk_writes, miss_latency_int);
@@ -522,12 +517,12 @@ int DfsFreeBlock(int blocknum) {
 
 int DfsReadBlock(int blocknum, dfs_block *b) {
   int i;
-  int physical_block_num = sb.block_size / DiskBytesPerBlock();
+  int ratio = sb.fs_blocksize / DiskBytesPerBlock();
   int data_index;
-  disk_block new_disk_block;
+  disk_block temp;
   int fbv_idx = blocknum / 32;
-  int total_read = 0;
-  int one_read;
+  int total_bytes_read = 0;
+  int bytes_read;
 
   if(sb.valid == 0)
   {
@@ -544,23 +539,23 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
     return DFS_FAIL;
   }
 
-  bzero(new_disk_block.data, DiskBytesPerBlock());
+  bzero(temp.data, DiskBytesPerBlock());
   
-  for(i = 0; i <= physical_block_num - 1; i++) {
+  for(i = 0; i <= ratio - 1; i++) {
     data_index = i * DiskBytesPerBlock();
-    one_read = DiskReadBlock(blocknum * physical_block_num + i, &new_disk_block);
-    bcopy(new_disk_block.data, &(b->data[data_index]), DiskBytesPerBlock());
+    bytes_read = DiskReadBlock(blocknum * ratio + i, &temp);
+    bcopy(temp.data, &(b->data[data_index]), DiskBytesPerBlock());
 
-    if(one_read == DISK_FAIL) {
+    if(bytes_read == DISK_FAIL) {
       return DFS_FAIL;
     }
     
-    total_read += one_read;
-    bzero(new_disk_block.data, DiskBytesPerBlock());
+    total_bytes_read += bytes_read;
+    bzero(temp.data, DiskBytesPerBlock());
   }
 
   num_disk_reads += 1;
-  return total_read;
+  return total_bytes_read;
 }
 
 
@@ -607,10 +602,10 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
   
 //   if(cache_handle != DFS_FAIL)
 //   {
-//     bcopy(b->data, caches[cache_handle].data, sb.block_size);
-//     caches[cache_handle].dirty = 1;
-//     caches[cache_handle].timestamp = ClkGetCurTime();
-//     AQueueRemove(&(caches[cache_handle].l));
+//     bcopy(b->data, cache[cache_handle].data, sb.fs_blocksize);
+//     cache[cache_handle].dirty = 1;
+//     cache[cache_handle].timestamp = ClkGetCurTime();
+//     AQueueRemove(&(cache[cache_handle].l));
 
 //     if(LockHandleRelease(cache_lock) == SYNC_FAIL)
 //     {
@@ -621,7 +616,7 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
 //     {
 //       last_blocknum_write = blocknum;
 //     }
-//     return sb.block_size;
+//     return sb.fs_blocksize;
 //   }
   
 //   latency_time = ClkGetCurTime();
@@ -641,13 +636,13 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
 //   //   return DFS_FAIL;
 //   // }
 
-//   // bcopy(new_dfs_block.data, caches[cache_handle].data, sb.block_size);
-//   // caches[cache_handle].valid = 1;
-//   // caches[cache_handle].dirty = 1;
-//   // caches[cache_handle].blocknum = blocknum;
-//   // bcopy(b->data, caches[cache_handle].data, sb.block_size);
-//   // total_write = sb.block_size;
-//   // caches[cache_handle].timestamp = ClkGetCurTime();
+//   // bcopy(new_dfs_block.data, cache[cache_handle].data, sb.fs_blocksize);
+//   // cache[cache_handle].valid = 1;
+//   // cache[cache_handle].dirty = 1;
+//   // cache[cache_handle].blocknum = blocknum;
+//   // bcopy(b->data, cache[cache_handle].data, sb.fs_blocksize);
+//   // total_write = sb.fs_blocksize;
+//   // cache[cache_handle].timestamp = ClkGetCurTime();
 
 //   // Added for bulk write ////////////////////////////////////////////
 //   if(not_translation != 0)
@@ -680,25 +675,25 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
 //         return DFS_FAIL;
 //       }
       
-//       caches[cache_handle_temp].valid = 1;
-//       caches[cache_handle_temp].dirty = 0;
-//       caches[cache_handle_temp].blocknum = i;
-//       caches[cache_handle_temp].timestamp = latency_time;
+//       cache[cache_handle_temp].valid = 1;
+//       cache[cache_handle_temp].dirty = 0;
+//       cache[cache_handle_temp].blocknum = i;
+//       cache[cache_handle_temp].timestamp = latency_time;
 
-//       if ((caches[cache_handle_temp].l = AQueueAllocLink(&caches[cache_handle_temp])) == NULL)
+//       if ((cache[cache_handle_temp].l = AQueueAllocLink(&cache[cache_handle_temp])) == NULL)
 //       {
 //         return DFS_FAIL;
 //       }
-//       if (AQueueInsertLast(&prefetch_queue_write, caches[cache_handle_temp].l) != QUEUE_SUCCESS)
+//       if (AQueueInsertLast(&prefetch_queue_write, cache[cache_handle_temp].l) != QUEUE_SUCCESS)
 //       {
 //         return DFS_FAIL;
 //       }
 //     }
 //   }
 //   /////////////////////////////////////////////////////////////////
-//   miss_latency = (miss_latency * (num_total_access - num_hit - 1) + (caches[cache_handle].timestamp - latency_time)) / (num_total_access - num_hit);
+//   miss_latency = (miss_latency * (num_total_accesses - num_hits - 1) + (cache[cache_handle].timestamp - latency_time)) / (num_total_accesses - num_hits);
 //   miss_latency_int = (int)miss_latency;
-//   hit_rate = (double)num_hit / (double)num_total_access * 100;
+//   hit_rate = (double)num_hits / (double)num_total_accesses * 100;
 //   miss_rate = 100.0 - hit_rate;
 //   printf("Cache Miss: Hit Rate = %.3f%%, Miss Rate = %.3f%%, ", hit_rate, miss_rate);
 //   printf("Disk Reads = %d, Disk Writes = %d, Miss Handling Latency = %dms\n", num_disk_reads, num_disk_writes, miss_latency_int);
@@ -717,12 +712,12 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
 
 int DfsWriteBlock(int blocknum, dfs_block *b){
   int i;
-  int physical_block_num = sb.block_size / DiskBytesPerBlock();
+  int ratio = sb.fs_blocksize / DiskBytesPerBlock();
   int data_index;
-  disk_block new_disk_block;
+  disk_block temp;
   int fbv_idx = blocknum / 32;
-  int total_write = 0;
-  int one_write;
+  int total_bytes_written = 0;
+  int bytes_written;
 
   if(sb.valid == 0)
   {
@@ -739,23 +734,23 @@ int DfsWriteBlock(int blocknum, dfs_block *b){
     return DFS_FAIL;
   }
 
-  bzero(new_disk_block.data, DiskBytesPerBlock());
+  bzero(temp.data, DiskBytesPerBlock());
   
-  for(i = 0; i <= physical_block_num - 1; i++) {
+  for(i = 0; i <= ratio - 1; i++) {
     data_index = i * DiskBytesPerBlock();
-    bcopy(&(b->data[data_index]), new_disk_block.data, DiskBytesPerBlock());
-    one_write = DiskWriteBlock(blocknum * physical_block_num + i, &new_disk_block);
+    bcopy(&(b->data[data_index]), temp.data, DiskBytesPerBlock());
+    bytes_written = DiskWriteBlock(blocknum * ratio + i, &temp);
 
-    if(one_write == DISK_FAIL) {
+    if(bytes_written == DISK_FAIL) {
       return DFS_FAIL;
     }
 
-    total_write += one_write;
-    bzero(new_disk_block.data, DiskBytesPerBlock());
+    total_bytes_written += bytes_written;
+    bzero(temp.data, DiskBytesPerBlock());
   }
 
   num_disk_writes += 1;
-  return total_write;
+  return total_bytes_written;
 }
 
 
@@ -777,9 +772,9 @@ int DfsInodeFilenameExists(char *filename) {
     return DFS_FAIL;
   }
 
-  for(i = 0; i <= DFS_INODE_MAX_NUM - 1; i++)
+  for(i = 0; i < DFS_INODE_MAX_NUM; i++)
   {
-    if(inodes[i].valid == 1 && dstrncmp(inodes[i].filename, filename, 71) == 0)
+    if(inodes[i].inuse == 1 && dstrncmp(inodes[i].filename, filename, DFS_MAX_FILENAME_LENGTH) == 0)
     {
       return i;
     }
@@ -789,7 +784,7 @@ int DfsInodeFilenameExists(char *filename) {
 }
 
 int DfsInodeRename(char *oldname, char *newname) {
-  int old_inode;
+  int handle;
 
   if(sb.valid == 0)
   {
@@ -801,15 +796,15 @@ int DfsInodeRename(char *oldname, char *newname) {
     return DFS_FAIL;
   }
 
-  old_inode = DfsInodeFilenameExists(oldname);
+  handle = DfsInodeFilenameExists(oldname);
 
-  if(old_inode == DFS_FAIL)
+  if(handle == DFS_FAIL)
   {
     return DFS_FAIL;
   }
 
-  bzero(inodes[old_inode].filename, 71);
-  dstrncpy(inodes[old_inode].filename, newname, dstrlen(newname));
+  bzero(inodes[handle].filename, 71);
+  dstrncpy(inodes[handle].filename, newname, dstrlen(newname));
   return DFS_SUCCESS;
 }
 //-----------------------------------------------------------------
@@ -821,7 +816,7 @@ int DfsInodeRename(char *oldname, char *newname) {
 //-----------------------------------------------------------------
 
 int DfsInodeOpen(char *filename) {
-    int filename_idx;
+    int inode_handle;
     int i;
 
     if(sb.valid == 0)
@@ -829,11 +824,11 @@ int DfsInodeOpen(char *filename) {
         return DFS_FAIL;
     }
 
-    filename_idx = DfsInodeFilenameExists(filename);
+    inode_handle = DfsInodeFilenameExists(filename);
 
-    if(filename_idx != DFS_FAIL)
+    if(inode_handle != DFS_FAIL)
     {
-      return filename_idx;
+      return inode_handle;
     }
 
     if(LockHandleAcquire(inode_lock) == SYNC_FAIL)
@@ -841,23 +836,23 @@ int DfsInodeOpen(char *filename) {
       return DFS_FAIL;
     }
 
-    for(i = 0; i <= DFS_INODE_MAX_NUM - 1; i++)
+    for(i = 0; i < DFS_INODE_MAX_NUM; i++)
     {
-      if(inodes[i].valid == 0)
+      if(inodes[i].inuse == 0)
       {
-        inodes[i].valid = 1;
+        inodes[i].inuse = 1;
 
         if(LockHandleRelease(inode_lock) == SYNC_FAIL)
         {
-          inodes[i].valid = 0;
+          inodes[i].inuse = 0;
           return DFS_FAIL;
         }
 
-        inodes[i].file_size = 0;
+        inodes[i].filesize = 0;
         dstrncpy(inodes[i].filename, filename, dstrlen(filename));
         bzero((char *)inodes[i].direct_table, sizeof(inodes[i].direct_table));
-        inodes[i].num_indirect_blocks = 0;
-        inodes[i].num_double_indirect_blocks = 0;
+        inodes[i].indirect_block = 0;
+        inodes[i].double_indirect_block = 0;
 
         return i;
       }
@@ -877,12 +872,9 @@ int DfsInodeOpen(char *filename) {
 //-----------------------------------------------------------------
 
 int DfsInodeDelete(int handle) {
-    int i;
-    int j;
-    dfs_block temp;
-    dfs_block temp2;
-    uint32 * int_temp;
-    uint32 * int_temp2;
+    int i, j;
+    dfs_block temp1, temp2;
+    uint32 * data_temp1, * data_temp2;
     int dfs_block_size;
 
     if(sb.valid == 0)
@@ -900,10 +892,10 @@ int DfsInodeDelete(int handle) {
       return DFS_FAIL;
     }
 
-    inodes[handle].file_size = 0;
-    bzero(inodes[handle].filename, 71);
+    inodes[handle].filesize = 0;
+    bzero(inodes[handle].filename, DFS_MAX_FILENAME_LENGTH);
 
-    for(i = 0; i <= 9; i++)
+    for(i = 0; i < DFS_MAX_DIR_TABLE_SIZE; i++)
     {
       if(inodes[handle].direct_table[i] != 0)
       {
@@ -917,10 +909,10 @@ int DfsInodeDelete(int handle) {
     
     bzero((char *)(inodes[i].direct_table), sizeof(inodes[i].direct_table));
 
-    if(inodes[handle].num_indirect_blocks != 0)
+    if(inodes[handle].indirect_block != 0)
     {
       not_translation = 0;
-      dfs_block_size = DfsReadBlock(inodes[handle].num_indirect_blocks, &temp);
+      dfs_block_size = DfsReadBlock(inodes[handle].indirect_block, &temp1);
       not_translation = 1;
       if(dfs_block_size == DFS_FAIL)
       {
@@ -928,13 +920,13 @@ int DfsInodeDelete(int handle) {
         return DFS_FAIL;
       }
 
-      int_temp = (uint32*)temp.data;
+      data_temp1 = (uint32*)temp1.data;
 
       for(i = 0; i <= 9; i++)
       {
-        if(int_temp[i] != 0)
+        if(data_temp1[i] != 0)
         {
-          if(DfsFreeBlock(int_temp[i]) == DFS_FAIL)
+          if(DfsFreeBlock(data_temp1[i]) == DFS_FAIL)
           {
             LockHandleRelease(inode_lock);
             return DFS_FAIL;
@@ -942,19 +934,19 @@ int DfsInodeDelete(int handle) {
         }
       }
 
-      if(DfsFreeBlock(inodes[handle].num_indirect_blocks) == DFS_FAIL)
+      if(DfsFreeBlock(inodes[handle].indirect_block) == DFS_FAIL)
       {
         LockHandleRelease(inode_lock);
         return DFS_FAIL;
       }
 
-      inodes[handle].num_indirect_blocks = 0;
+      inodes[handle].indirect_block = 0;
     }
 
-    if(inodes[handle].num_double_indirect_blocks != 0)
+    if(inodes[handle].double_indirect_block != 0)
     {
       not_translation = 0;
-      dfs_block_size = DfsReadBlock(inodes[handle].num_double_indirect_blocks, &temp);
+      dfs_block_size = DfsReadBlock(inodes[handle].double_indirect_block, &temp1);
       not_translation = 1;
     
       if(dfs_block_size == DFS_FAIL)
@@ -963,14 +955,14 @@ int DfsInodeDelete(int handle) {
         return DFS_FAIL;
       }
 
-      int_temp = (uint32*)temp.data;
+      data_temp1 = (uint32*)temp1.data;
 
       for(i = 0; i <= 9; i++)
       {
-        if(int_temp[i] != 0)
+        if(data_temp1[i] != 0)
         {
           not_translation = 0;
-          dfs_block_size = DfsReadBlock(int_temp[i], &temp2);
+          dfs_block_size = DfsReadBlock(data_temp1[i], &temp2);
           not_translation = 1;
           
           if(dfs_block_size == DFS_FAIL)
@@ -979,13 +971,13 @@ int DfsInodeDelete(int handle) {
             return DFS_FAIL;
           }
           
-          int_temp2 = (uint32*)temp2.data;
+          data_temp2 = (uint32*)temp2.data;
 
           for(j = 0; j <= 9; j++)
           {
-            if(int_temp2[j] != 0)
+            if(data_temp2[j] != 0)
             {
-              if(DfsFreeBlock(int_temp2[j]) == DFS_FAIL)
+              if(DfsFreeBlock(data_temp2[j]) == DFS_FAIL)
               {
                 LockHandleRelease(inode_lock);
                 return DFS_FAIL;
@@ -993,7 +985,7 @@ int DfsInodeDelete(int handle) {
             }
           }
 
-          if(DfsFreeBlock(int_temp[i]) == DFS_FAIL)
+          if(DfsFreeBlock(data_temp1[i]) == DFS_FAIL)
           {
             LockHandleRelease(inode_lock);
             return DFS_FAIL;
@@ -1001,16 +993,16 @@ int DfsInodeDelete(int handle) {
         }
       }
     
-      if(DfsFreeBlock(inodes[handle].num_double_indirect_blocks) == DFS_FAIL)
+      if(DfsFreeBlock(inodes[handle].double_indirect_block) == DFS_FAIL)
       {
         LockHandleRelease(inode_lock);
         return DFS_FAIL;
       }
       
-      inodes[handle].num_double_indirect_blocks = 0;
+      inodes[handle].double_indirect_block = 0;
     }
     
-    inodes[i].valid = 0;
+    inodes[i].inuse = 0;
 
     if(LockHandleRelease(inode_lock) == SYNC_FAIL)
     {
@@ -1029,14 +1021,9 @@ int DfsInodeDelete(int handle) {
 //-----------------------------------------------------------------
 
 int DfsInodeReadBytes(int handle, void *mem, int start_byte, int num_bytes) {
-    int start_block;
-    int end_block;
-    int end_byte;
-    int total_read = 0;
-    int one_read;
-    int physical_block;
-    int block_num;
-    int block_offset;
+    int first_block, last_block, end_byte;
+    int total_bytes_read = 0, bytes_read;
+    int phy_block, i, offset;
     dfs_block temp;
 
     if(sb.valid == 0)
@@ -1044,56 +1031,61 @@ int DfsInodeReadBytes(int handle, void *mem, int start_byte, int num_bytes) {
        return DFS_FAIL;
     }
 
-    if(handle < 0 || handle > DFS_INODE_MAX_NUM - 1 || start_byte < 0 || num_bytes < 0 || start_byte > inodes[handle].file_size || inodes[handle].valid == 0)
+    if(handle < 0 || handle > DFS_INODE_MAX_NUM - 1)
     {
       return DFS_FAIL;
     }
 
-    end_byte = (start_byte + num_bytes - 1) > inodes[handle].file_size ? inodes[handle].file_size : (start_byte + num_bytes - 1);
-    start_block = start_byte / sb.block_size;
-    block_num = start_block;
-    end_block = end_byte / sb.block_size;
-
-    while(block_num <= end_block)
+    if(start_byte < 0 || num_bytes < 0 || start_byte > inodes[handle].filesize || inodes[handle].inuse == 0)
     {
-      physical_block = DfsInodeTranslateVirtualToFilesys(handle, block_num);
-      if(physical_block == DFS_FAIL)
+      return DFS_FAIL;
+    }
+
+    end_byte = ((start_byte + num_bytes - 1) > inodes[handle].filesize) ? inodes[handle].filesize : (start_byte + num_bytes - 1);
+    first_block = start_byte / sb.fs_blocksize;
+    i = first_block;
+    last_block = end_byte / sb.fs_blocksize;
+
+    while(i <= last_block)
+    {
+      phy_block = DfsInodeTranslateVirtualToFilesys(handle, i);
+      if(phy_block == DFS_FAIL)
       {
         return DFS_FAIL;
       }
-      one_read = DfsReadBlock(physical_block, &temp);
-      if(one_read == DFS_FAIL)
+      bytes_read = DfsReadBlock(phy_block, &temp);
+      if(bytes_read == DFS_FAIL)
       {
         return DFS_FAIL;
       }
 
-      if(start_block == end_block)
+      if(first_block == last_block)
       {
-        one_read = end_byte - start_byte + 1;
-        block_offset = start_byte % sb.block_size;
+        bytes_read = end_byte - start_byte + 1;
+        offset = start_byte % sb.fs_blocksize;
       }
-      else if(block_num == start_block)
+      else if(i == first_block)
       {
-        block_offset = start_byte % sb.block_size;
-        one_read = sb.block_size - block_offset;
+        offset = start_byte % sb.fs_blocksize;
+        bytes_read = sb.fs_blocksize - offset;
       }
-      else if(block_num == end_block)
+      else if(i == last_block)
       {
-        block_offset = 0;
-        one_read = (end_byte % sb.block_size) + 1;
+        offset = 0;
+        bytes_read = (end_byte % sb.fs_blocksize) + 1;
       }
       else
       {
-        block_offset = 0;
-        one_read = sb.block_size;
+        offset = 0;
+        bytes_read = sb.fs_blocksize;
       }
 
-      bcopy(temp.data + block_offset, (char *)mem + total_read, one_read);
-      total_read = total_read + one_read;
-      block_num = block_num + 1;
+      bcopy(temp.data + offset, (char *)mem + total_bytes_read, bytes_read);
+      total_bytes_read = total_bytes_read + bytes_read;
+      i = i + 1;
     }
 
-    return total_read;
+    return total_bytes_read;
 }
 
 
@@ -1107,14 +1099,9 @@ int DfsInodeReadBytes(int handle, void *mem, int start_byte, int num_bytes) {
 //-----------------------------------------------------------------
 
 int DfsInodeWriteBytes(int handle, void *mem, int start_byte, int num_bytes) {
-    int one_write;
-    int total_write = 0;
-    int start_block;
-    int end_block;
-    int end_byte;
-    int physical_block;
-    int block_num;
-    int block_offset;
+    int bytes_written, total_bytes_written = 0;
+    int first_block, last_block, end_byte;
+    int phy_block, offset;
     dfs_block temp;
     int i;
 
@@ -1123,105 +1110,109 @@ int DfsInodeWriteBytes(int handle, void *mem, int start_byte, int num_bytes) {
       return DFS_FAIL;
     }
 
-    if(handle < 0 || handle > DFS_INODE_MAX_NUM - 1 || start_byte < 0 || num_bytes < 0 || inodes[handle].valid == 0)
+    if(handle < 0 || handle > DFS_INODE_MAX_NUM - 1 || inodes[handle].inuse == 0)
+    {
+      return DFS_FAIL;
+    }
+
+    if(start_byte < 0 || num_bytes < 0)
     {
       return DFS_FAIL;
     }
 
     end_byte = start_byte + num_bytes - 1;
-    start_block = start_byte / sb.block_size;
-    block_num = start_block;
-    end_block = end_byte / sb.block_size;
+    first_block = start_byte / sb.fs_blocksize;
+    i = first_block;
+    last_block = end_byte / sb.fs_blocksize;
 
-    // CHANGE: allocate blocks before writing
-    for(i = 0; i <= start_block - 1; i++)
+    for(i = 0; i <= first_block - 1; i++)
     {
-      physical_block = DfsInodeTranslateVirtualToFilesys(handle, i);
+      phy_block = DfsInodeTranslateVirtualToFilesys(handle, i);
       
-      if(physical_block == DFS_FAIL)
+      if(phy_block == DFS_FAIL)
       {
-        physical_block = DfsInodeAllocateVirtualBlock(handle, i);
+        phy_block = DfsInodeAllocateVirtualBlock(handle, i);
 
-        if(physical_block == DFS_FAIL)
+        if(phy_block == DFS_FAIL)
         {
           return DFS_FAIL;
         }
 
-        bzero(temp.data, sb.block_size);
+        bzero(temp.data, sb.fs_blocksize);
 
-        if(DfsWriteBlock(physical_block, &temp) == DFS_FAIL)
+        if(DfsWriteBlock(phy_block, &temp) == DFS_FAIL)
         {
           return DFS_FAIL;
         }
       }
     }
     
-    while(block_num <= end_block)
+    while(i <= last_block)
     {
-      physical_block = DfsInodeTranslateVirtualToFilesys(handle, block_num);
+      phy_block = DfsInodeTranslateVirtualToFilesys(handle, i);
       
-      if(physical_block == DFS_FAIL)
+      if(phy_block == DFS_FAIL)
       {
-        physical_block = DfsInodeAllocateVirtualBlock(handle, block_num);
+        phy_block = DfsInodeAllocateVirtualBlock(handle, i);
 
-        if(physical_block == DFS_FAIL)
+        if(phy_block == DFS_FAIL)
         {
           return DFS_FAIL;
         }
 
-        bzero(temp.data, sb.block_size);
+        bzero(temp.data, sb.fs_blocksize);
 
-        if(DfsWriteBlock(physical_block, &temp) == DFS_FAIL)
+        if(DfsWriteBlock(phy_block, &temp) == DFS_FAIL)
         {
           return DFS_FAIL;
         }
       }
 
-      one_write = DfsReadBlock(physical_block, &temp);
+      bytes_written = DfsReadBlock(phy_block, &temp);
       
-      if(one_write == DFS_FAIL)
+      if(bytes_written == DFS_FAIL)
       {
         return DFS_FAIL;
       }
 
-      if(start_block == end_block)
+      if(first_block == last_block)
       {
-        one_write = end_byte - start_byte + 1;
-        block_offset = start_byte % sb.block_size;
+        bytes_written = end_byte - start_byte + 1;
+        offset = start_byte % sb.fs_blocksize;
       }
-      else if(block_num == start_block)
+      else if(i == first_block)
       {
-        block_offset = start_byte % sb.block_size;
-        one_write = sb.block_size - block_offset;
+        offset = start_byte % sb.fs_blocksize;
+        bytes_written = sb.fs_blocksize - offset;
       }
-      else if(block_num == end_block)
+      else if(i == last_block)
       {
-        block_offset = 0;
-        one_write = (end_byte % sb.block_size) + 1;
+        offset = 0;
+        bytes_written = (end_byte % sb.fs_blocksize) + 1;
       }
       else
       {
-        block_offset = 0;
-        one_write = sb.block_size;
+        offset = 0;
+        bytes_written = sb.fs_blocksize;
       }
 
-      bcopy((char *)mem + total_write, temp.data + block_offset, one_write);
+      bcopy((char *)mem + total_bytes_written, temp.data + offset, bytes_written);
       
-      if(DfsWriteBlock(physical_block, &temp) == DFS_FAIL)
+      if(DfsWriteBlock(phy_block, &temp) == DFS_FAIL)
       {
         return DFS_FAIL;
       }
 
-      total_write = total_write + one_write;
-      block_num = block_num + 1;
+      total_bytes_written = total_bytes_written + bytes_written;
+      i = i + 1;
     }
 
-    if((start_byte + total_write) > inodes[handle].file_size)
+    if((start_byte + total_bytes_written) > inodes[handle].filesize)
     {
-      inodes[handle].file_size = start_byte + total_write;
+      inodes[handle].filesize += (start_byte + total_bytes_written - inodes[handle].filesize);
     }
     
-    return total_write;
+    return total_bytes_written;
 }
 
 
@@ -1237,12 +1228,12 @@ int DfsInodeFilesize(int handle) {
       return DFS_FAIL;
     }
 
-    if(handle > DFS_INODE_MAX_NUM - 1 || inodes[handle].valid == 0)
+    if(handle < 0 || handle >= DFS_INODE_MAX_NUM || inodes[handle].inuse == 0)
     {
       return DFS_FAIL;
     }
 
-    return inodes[handle].file_size;
+    return inodes[handle].filesize;
 }
 
 
@@ -1258,21 +1249,23 @@ int DfsInodeFilesize(int handle) {
 
 int DfsInodeAllocateVirtualBlock(int handle, int virtual_blocknum) {
   int physical_block_num;
-  dfs_block temp;
-  dfs_block temp2;
-  uint32 * int_temp;
-  uint32 * int_temp2;
-  int check_num;
-  int dfs_block_size;
-  int first_indirect_idx;
-  int double_indirect_idx;
+  dfs_block temp1, temp2;
+  uint32 * data_temp1, * data_temp2;
+  int check_num, retval;
+  int indirect_idx, double_indirect_idx;
+  int indirect_table_size = sb.fs_blocksize/sizeof(uint32);
 
   if(sb.valid == 0)
   {
     return DFS_FAIL;
   }
 
-  if(handle < 0 || handle > DFS_INODE_MAX_NUM - 1 || inodes[handle].valid == 0 || virtual_blocknum < 0 || virtual_blocknum > (10 + (sb.block_size / 4) + (sb.block_size / 4) * (sb.block_size / 4) - 1))
+  if(handle < 0 || handle > DFS_INODE_MAX_NUM - 1 || inodes[handle].inuse == 0)
+  {
+    return DFS_FAIL;
+  }
+
+  if(virtual_blocknum < 0 || virtual_blocknum > (DFS_MAX_DIR_TABLE_SIZE + indirect_table_size + indirect_table_size * indirect_table_size - 1))
   {
     return DFS_FAIL;
   }
@@ -1284,25 +1277,25 @@ int DfsInodeAllocateVirtualBlock(int handle, int virtual_blocknum) {
     return DFS_FAIL;
   }
 
-  if(virtual_blocknum <= 9)
+  if(virtual_blocknum < DFS_MAX_DIR_TABLE_SIZE)
   {
     inodes[handle].direct_table[virtual_blocknum] = physical_block_num;
   }
-  else if(virtual_blocknum <= 9 + (sb.block_size / 4))
+  else if(virtual_blocknum < DFS_MAX_DIR_TABLE_SIZE + indirect_table_size)
   {
-    if(inodes[handle].num_indirect_blocks == 0)
+    if(inodes[handle].indirect_block == 0)
     {
-      inodes[handle].num_indirect_blocks = DfsAllocateBlock();
+      inodes[handle].indirect_block = DfsAllocateBlock();
 
-      if(inodes[handle].num_indirect_blocks == DFS_FAIL)
+      if(inodes[handle].indirect_block == DFS_FAIL)
       {
         return DFS_FAIL;
       }
 
-      bzero(temp.data, sb.block_size);
+      bzero(temp1.data, sb.fs_blocksize);
 
       not_translation = 0;
-      if(DfsWriteBlock(inodes[handle].num_indirect_blocks, &temp) == DFS_FAIL)
+      if(DfsWriteBlock(inodes[handle].indirect_block, &temp1) == DFS_FAIL)
       {
         not_translation = 1;
         return DFS_FAIL;
@@ -1311,20 +1304,20 @@ int DfsInodeAllocateVirtualBlock(int handle, int virtual_blocknum) {
     }
 
     not_translation = 0;
-    dfs_block_size = DfsReadBlock(inodes[handle].num_indirect_blocks, &temp);
+    retval = DfsReadBlock(inodes[handle].indirect_block, &temp1);
     not_translation = 1;
     
-    if(dfs_block_size == DFS_FAIL)
+    if(retval == DFS_FAIL)
     {
       return DFS_FAIL;
     }
 
-    int_temp = (uint32*)temp.data;
-    first_indirect_idx = virtual_blocknum - 10;
-    int_temp[first_indirect_idx] = physical_block_num;
+    data_temp1 = (uint32*)temp1.data;
+    indirect_idx = virtual_blocknum - DFS_MAX_DIR_TABLE_SIZE;
+    data_temp1[indirect_idx] = physical_block_num;
     
     not_translation = 0;
-    if(DfsWriteBlock(inodes[handle].num_indirect_blocks, &temp) == DFS_FAIL)
+    if(DfsWriteBlock(inodes[handle].indirect_block, &temp1) == DFS_FAIL)
     {
       not_translation = 1;
       return DFS_FAIL;
@@ -1333,19 +1326,19 @@ int DfsInodeAllocateVirtualBlock(int handle, int virtual_blocknum) {
   }
   else
   {
-    if(inodes[handle].num_double_indirect_blocks == 0)
+    if(inodes[handle].double_indirect_block == 0)
     {
-      inodes[handle].num_double_indirect_blocks = DfsAllocateBlock();
+      inodes[handle].double_indirect_block = DfsAllocateBlock();
 
-      if(inodes[handle].num_double_indirect_blocks == DFS_FAIL)
+      if(inodes[handle].double_indirect_block == DFS_FAIL)
       {
         return DFS_FAIL;
       }
 
-      bzero(temp.data, sb.block_size);
+      bzero(temp1.data, sb.fs_blocksize);
 
       not_translation = 0;
-      if(DfsWriteBlock(inodes[handle].num_double_indirect_blocks, &temp) == DFS_FAIL)
+      if(DfsWriteBlock(inodes[handle].double_indirect_block, &temp1) == DFS_FAIL)
       {
         not_translation = 1;
         return DFS_FAIL;
@@ -1354,18 +1347,18 @@ int DfsInodeAllocateVirtualBlock(int handle, int virtual_blocknum) {
     }
 
     not_translation = 0;
-    dfs_block_size = DfsReadBlock(inodes[handle].num_double_indirect_blocks, &temp);
+    retval = DfsReadBlock(inodes[handle].double_indirect_block, &temp1);
     not_translation = 1;
     
-    if(dfs_block_size == DFS_FAIL)
+    if(retval == DFS_FAIL)
     {
       return DFS_FAIL;
     }
 
-    int_temp = (uint32*)temp.data;
-    first_indirect_idx = (virtual_blocknum - 10 - (sb.block_size / 4)) / (sb.block_size / 4);
+    data_temp1 = (uint32*)temp1.data;
+    indirect_idx = (virtual_blocknum - DFS_MAX_DIR_TABLE_SIZE - indirect_table_size) / indirect_table_size;
 
-    if(int_temp[first_indirect_idx] == 0)
+    if(data_temp1[indirect_idx] == 0)
     {
       check_num = DfsAllocateBlock();
 
@@ -1374,11 +1367,11 @@ int DfsInodeAllocateVirtualBlock(int handle, int virtual_blocknum) {
         return DFS_FAIL;
       }
 
-      int_temp[first_indirect_idx] = (uint32)check_num;
-      bzero(temp2.data, sb.block_size);
+      data_temp1[indirect_idx] = (uint32)check_num;
+      bzero(temp2.data, sb.fs_blocksize);
       
       not_translation = 0;
-      if(DfsWriteBlock(int_temp[first_indirect_idx], &temp2) == DFS_FAIL)
+      if(DfsWriteBlock(data_temp1[indirect_idx], &temp2) == DFS_FAIL)
       {
         not_translation = 1;
         return DFS_FAIL;
@@ -1387,7 +1380,7 @@ int DfsInodeAllocateVirtualBlock(int handle, int virtual_blocknum) {
     }
 
     not_translation = 0;
-    if(DfsWriteBlock(inodes[handle].num_double_indirect_blocks, &temp) == DFS_FAIL)
+    if(DfsWriteBlock(inodes[handle].double_indirect_block, &temp1) == DFS_FAIL)
     {
       not_translation = 1;
       return DFS_FAIL;
@@ -1395,19 +1388,19 @@ int DfsInodeAllocateVirtualBlock(int handle, int virtual_blocknum) {
     not_translation = 1;
 
     not_translation = 0;
-    dfs_block_size = DfsReadBlock(int_temp[first_indirect_idx], &temp2);
+    retval = DfsReadBlock(data_temp1[indirect_idx], &temp2);
     not_translation = 1;
-    if(dfs_block_size == DFS_FAIL)
+    if(retval == DFS_FAIL)
     {
       return DFS_FAIL;
     }
 
-    int_temp2 = (uint32*)temp2.data;
-    double_indirect_idx = (virtual_blocknum - 10 - (sb.block_size / 4)) % (sb.block_size / 4);
-    int_temp2[double_indirect_idx] = physical_block_num;
+    data_temp2 = (uint32*)temp2.data;
+    double_indirect_idx = (virtual_blocknum - DFS_MAX_DIR_TABLE_SIZE - indirect_table_size) % indirect_table_size;
+    data_temp2[double_indirect_idx] = physical_block_num;
 
     not_translation = 0;
-    if(DfsWriteBlock(int_temp[first_indirect_idx], &temp2) == DFS_FAIL)
+    if(DfsWriteBlock(data_temp1[indirect_idx], &temp2) == DFS_FAIL)
     {
       not_translation = 1;
       return DFS_FAIL;
@@ -1426,25 +1419,31 @@ int DfsInodeAllocateVirtualBlock(int handle, int virtual_blocknum) {
 //-----------------------------------------------------------------
 
 int DfsInodeTranslateVirtualToFilesys(int handle, int virtual_blocknum) {
-  dfs_block temp;
-  dfs_block temp2;
-  uint32 * int_temp;
-  uint32 * int_temp2;
-  int dfs_block_size;
-  int first_indirect_idx;
-  int double_indirect_idx;
+  dfs_block temp1, temp2;
+  uint32 * data_temp1, * data_temp2;
+  int retval;
+  int indirect_idx, double_indirect_idx;
+  int indirect_table_size = sb.fs_blocksize/sizeof(uint32);
+  int total_virtual_blocks;
+  uint32 double_indirect_table_size = indirect_table_size*indirect_table_size;
 
   if(sb.valid == 0)
   {
     return DFS_FAIL;
   }
 
-  if(handle < 0 || handle > DFS_INODE_MAX_NUM - 1 || inodes[handle].valid == 0 || virtual_blocknum < 0 || virtual_blocknum > (10 + (sb.block_size / 4) + (sb.block_size / 4) * (sb.block_size / 4) - 1) || virtual_blocknum > (inodes[handle].file_size / sb.block_size))
+  if(handle < 0 || handle > DFS_INODE_MAX_NUM - 1 || inodes[handle].inuse == 0)
   {
     return DFS_FAIL;
   }
 
-  if(virtual_blocknum <= 9)
+  total_virtual_blocks = 1 + ((inodes[handle].filesize - 1) / sb.fs_blocksize);
+  if(virtual_blocknum < 0 || virtual_blocknum > (DFS_MAX_DIR_TABLE_SIZE + indirect_table_size + double_indirect_table_size - 1) || virtual_blocknum >= total_virtual_blocks)
+  {
+    return DFS_FAIL;
+  }
+
+  if(virtual_blocknum < DFS_MAX_DIR_TABLE_SIZE)
   {
     if(inodes[handle].direct_table[virtual_blocknum] != 0)
     {
@@ -1455,15 +1454,15 @@ int DfsInodeTranslateVirtualToFilesys(int handle, int virtual_blocknum) {
       return DFS_FAIL;
     }
   }
-  else if(virtual_blocknum <= 9 + (sb.block_size / 4))
+  else if(virtual_blocknum < (DFS_MAX_DIR_TABLE_SIZE + indirect_table_size))
   {
-    if(inodes[handle].num_indirect_blocks != 0)
+    if(inodes[handle].indirect_block != 0)
     {
       not_translation = 0;
-      dfs_block_size = DfsReadBlock(inodes[handle].num_indirect_blocks, &temp);
+      retval = DfsReadBlock(inodes[handle].indirect_block, &temp1);
       not_translation = 1;
     
-      if(dfs_block_size == DFS_FAIL)
+      if(retval == DFS_FAIL)
       {
         return DFS_FAIL;
       }
@@ -1473,12 +1472,12 @@ int DfsInodeTranslateVirtualToFilesys(int handle, int virtual_blocknum) {
       return DFS_FAIL;
     }
 
-    int_temp = (uint32*)temp.data;
-    first_indirect_idx = virtual_blocknum - 10;
+    data_temp1 = (uint32*)temp1.data;
+    indirect_idx = virtual_blocknum - DFS_MAX_DIR_TABLE_SIZE;
 
-    if(int_temp[first_indirect_idx] != 0)
+    if(data_temp1[indirect_idx] != 0)
     {
-      return int_temp[first_indirect_idx];
+      return data_temp1[indirect_idx];
     }
     else
     {
@@ -1487,37 +1486,37 @@ int DfsInodeTranslateVirtualToFilesys(int handle, int virtual_blocknum) {
   }
   else
   {
-    if(inodes[handle].num_double_indirect_blocks != 0)
+    if(inodes[handle].double_indirect_block != 0)
     {
       not_translation = 0;
-      dfs_block_size = DfsReadBlock(inodes[handle].num_double_indirect_blocks, &temp);
+      retval = DfsReadBlock(inodes[handle].double_indirect_block, &temp1);
       not_translation = 1;
     
-      if(dfs_block_size == DFS_FAIL)
+      if(retval == DFS_FAIL)
       {
         return DFS_FAIL;
       }
 
-      int_temp = (uint32*)temp.data;
-      first_indirect_idx = (virtual_blocknum - 10 - (sb.block_size / 4)) / (sb.block_size / 4);
+      data_temp1 = (uint32*)temp1.data;
+      indirect_idx = (virtual_blocknum - DFS_MAX_DIR_TABLE_SIZE - indirect_table_size) / indirect_table_size;
 
-      if(int_temp[first_indirect_idx] != 0)
+      if(data_temp1[indirect_idx] != 0)
       {
         not_translation = 0;
-        dfs_block_size = DfsReadBlock(int_temp[first_indirect_idx], &temp2);
+        retval = DfsReadBlock(data_temp1[indirect_idx], &temp2);
         not_translation = 1;
 
-        if(dfs_block_size == DFS_FAIL)
+        if(retval == DFS_FAIL)
         {
           return DFS_FAIL;
         }
 
-        int_temp2 = (uint32*)temp2.data;
-        double_indirect_idx = (virtual_blocknum - 10 - (sb.block_size / 4)) % (sb.block_size / 4);
+        data_temp2 = (uint32*)temp2.data;
+        double_indirect_idx = (virtual_blocknum - DFS_MAX_DIR_TABLE_SIZE - indirect_table_size) % indirect_table_size;
 
-        if(int_temp2[double_indirect_idx] != 0)
+        if(data_temp2[double_indirect_idx] != 0)
         {
-          return int_temp2[double_indirect_idx];
+          return data_temp2[double_indirect_idx];
         }
         else
         {
@@ -1540,61 +1539,80 @@ int DfsInodeTranslateVirtualToFilesys(int handle, int virtual_blocknum) {
 
 int DfsCacheHit(int blocknum) {
   int i;
-  int cache_idx = blocknum & CACHE_IDX_MASK;
+  int index = blocknum & CACHE_IDX_MASK;
 
-  num_total_access += 1;
-  
-  for(i = cache_idx; i <= cache_idx + CACHE_WAYS - 1; i++)
+  num_total_accesses += 1;
+
+  if(LockHandleAcquire(cache_lock) != SYNC_SUCCESS)
   {
-    if(caches[i].valid == 1 && caches[i].blocknum == blocknum)
+    return DFS_FAIL;
+  }
+  
+  for(i = index; i < (index + CACHE_WAYS); i++)
+  {
+    if((cache[i].valid == 1) && (cache[i].blocknum == blocknum))
     {
-      num_hit += 1;
+      num_hits += 1;
+      if(LockHandleRelease(cache_lock) != SYNC_SUCCESS)
+      {
+        num_hits -= 1;
+        return DFS_FAIL;
+      }
       return i;
     }
   }
-  
+  LockHandleRelease(cache_lock);
   return DFS_FAIL;
 }
 
 
 int DfsCacheAllocateSlot(int blocknum) {
   int i;
-  int cache_dest = -1;
+  int cache_line = -1;
   dfs_block temp;
-  int cache_idx = blocknum & CACHE_IDX_MASK;
-  
-  for(i = cache_idx; i <= cache_idx + CACHE_WAYS - 1; i++)
+  int index = blocknum & CACHE_IDX_MASK;
+
+  if(LockHandleAcquire(cache_lock) != SYNC_SUCCESS)
   {
-    if(caches[i].valid == 0)
+    return DFS_FAIL;
+  }
+  
+  for(i = index; i < (index + CACHE_WAYS); i++)
+  {
+    if(cache[i].valid == 0)
     {
-      cache_dest = i;
-      break;
+        if(LockHandleRelease(cache_lock) != SYNC_SUCCESS)
+        {
+            return DFS_FAIL;
+        }
+        return i;
     }
   }
 
-  if(cache_dest == -1)
+  cache_line = DfsCacheReplacementPolicy(blocknum);
+  if(cache_line == DFS_FAIL)
   {
-    cache_dest = DfsCacheReplacePolicy(blocknum);
+    LockHandleRelease(cache_lock);
+    return DFS_FAIL;
   }
 
-  if(cache_dest < 0 || cache_dest > CACHE_SIZE - 1)
+  if((cache[cache_line].valid == 1) && (cache[cache_line].dirty == 1))
   {
-    cache_dest = 0;
-  }
-
-  if(caches[cache_dest].valid == 1 && caches[cache_dest].dirty == 1)
-  {
-    bcopy(caches[cache_dest].data, temp.data, sb.block_size);
-
-    if(DfsWriteBlock(caches[cache_dest].blocknum, &temp) == DFS_FAIL)
+    bcopy(cache[cache_line].data, temp.data, sb.fs_blocksize);
+    if(DfsWriteBlock(cache[cache_line].blocknum, &temp) == DFS_FAIL)
     {
+      LockHandleRelease(cache_lock);
       return DFS_FAIL;
     }
-
-    caches[cache_dest].dirty = 0;
+    cache[cache_line].dirty = 0;
   }
 
-  return cache_dest;
+  if(LockHandleRelease(cache_lock) != SYNC_SUCCESS)
+  {
+    return DFS_FAIL;
+  }
+
+  return cache_line;
 }
 
 int DfsCacheFlush() {
@@ -1613,17 +1631,17 @@ int DfsCacheFlush() {
 
   for(i = 0; i <= CACHE_SIZE - 1; i++)
   {
-    if(caches[i].valid == 1 && caches[i].dirty == 1)
+    if(cache[i].valid == 1 && cache[i].dirty == 1)
     {
-      bcopy(caches[i].data, temp.data, sb.block_size);
+      bcopy(cache[i].data, temp.data, sb.fs_blocksize);
       
-      if(DfsWriteBlock(caches[i].blocknum, &temp) == DFS_FAIL)
+      if(DfsWriteBlock(cache[i].blocknum, &temp) == DFS_FAIL)
       {
         LockHandleRelease(cache_lock);
         return DFS_FAIL;
       }
 
-      caches[i].dirty = 0;
+      cache[i].dirty = 0;
     }
   }
 
@@ -1636,20 +1654,21 @@ int DfsCacheFlush() {
 }
 
 
-int DfsCacheReplacePolicy(int blocknum) {
+int DfsCacheReplacementPolicy(int blocknum) {
+  //LRU
   int i;
-  int cache_idx = blocknum & CACHE_IDX_MASK;
-  int cache_dest = 0;
+  int index = blocknum & CACHE_IDX_MASK;
+  int cache_line = 0;
   double min_time = ClkGetCurTime();
 
-  for(i = cache_idx; i <= cache_idx + CACHE_WAYS - 1; i++)
+  for(i = index; i < (index + CACHE_WAYS); i++)
   {
-    if(caches[i].timestamp < min_time)
+    if(cache[i].timestamp < min_time)
     {
-      min_time = caches[i].timestamp;
-      cache_dest = i;
+      min_time = cache[i].timestamp;
+      cache_line = i;
     }
   }
 
-  return cache_dest;
+  return cache_line;
 }

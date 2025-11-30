@@ -14,11 +14,8 @@ typedef struct cache_block {
 } cache_block;
 
 #define CACHE_SIZE 128
-// #define CACHE_SLOT_SIZE 1
 #define CACHE_WAYS CACHE_SIZE
-// #define CACHE_SETS ((CACHE_SIZE / CACHE_WAYS) / CACHE_SLOT_SIZE)
 #define CACHE_SETS (CACHE_SIZE / CACHE_WAYS)
-// #define CACHE_SLOT_MASK CACHE_SLOT_SIZE - 1
 #define CACHE_IDX_MASK (CACHE_SETS - 1)
 #define CACHE_TAG_MASK (0xFFFFFFFF - CACHE_IDX_MASK)
 #define MAX_WND 64
@@ -32,6 +29,7 @@ int DfsAllocateBlock();
 int DfsFreeBlock(int blocknum);
 int DfsReadBlock(int blocknum, dfs_block *b);
 int DfsWriteBlock(int blocknum, dfs_block *b);
+
 int DfsInodeFilenameExists(char *filename);
 int DfsInodeOpen(char *filename);
 int DfsInodeDelete(int handle);
@@ -43,9 +41,13 @@ int DfsInodeTranslateVirtualToFilesys(int handle, int virtual_blocknum);
 int DfsInodeRename(char *oldname, char *newname);
 int DfsReadBlockUncached(int blocknum, dfs_block *b);
 int DfsWriteBlockUncached(int blocknum, dfs_block *b);
+
 int DfsCacheHit(int blocknum);
 int DfsCacheAllocateSlot(int blocknum);
 int DfsCacheFlush();
-int DfsCacheReplacePolicy(int blocknum);
+int DfsCacheReplacementPolicy();
+
+#define DFS_SUPERBLOCK_PHY_BLOCKNUM 4
+#define DFS_REDUNDANT_SB_PHY_BLOCKNUM 65535*4
 
 #endif

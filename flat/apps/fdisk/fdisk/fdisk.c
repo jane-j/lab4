@@ -40,12 +40,17 @@ void main (int argc, char *argv[])
   // Need to invalidate filesystem before writing to it to make sure that the OS
   // doesn't wipe out what we do here with the old version in memory
   // You can use dfs_invalidate(); but it will be implemented in Problem 2. You can just do 
-  sb.valid = 0;
-  sb.block_size = DFS_BLOCKSIZE;
-  sb.num_block = (64 * 1024 * 1024) / DFS_BLOCKSIZE;
+
+  //superblock setup
+  dfs_invalidate();
+  sb.fs_blocksize = DFS_BLOCKSIZE;
+  sb.num_fs_blocks = DFS_MAX_FILESYSTEM_SIZE / DFS_BLOCKSIZE;
   sb.start_block_inode = FDISK_INODE_BLOCK_START;
   sb.num_inode = FDISK_NUM_INODES;
   sb.start_block_fbv = FDISK_FBV_BLOCK_START;
+  sb.start_block_data = DFS_FBV_BLOCK_END + 1;
+
+  Printf("start block data %d\n", sb.start_block_data);
 
   disksize = disk_size();
   diskblocksize = disk_blocksize();
@@ -53,7 +58,7 @@ void main (int argc, char *argv[])
 
   // Make sure the disk exists before doing anything else
   if(disk_create() == DISK_FAIL) {
-    // Printf("fdisk (%d): Error creating disk file.\n", getpid());
+    Printf("fdisk: Error creating disk file. Aborting!\n");
     Exit();
   }
 
@@ -61,18 +66,20 @@ void main (int argc, char *argv[])
   // Next, setup free block vector (fbv) and write free block vector to the disk
   // Finally, setup superblock as valid filesystem and write superblock and boot record to disk: 
   // boot record is all zeros in the first physical block, and superblock structure goes into the second physical block
+  
+  
+  //Inode setup
   for(i = 0; i <= DFS_INODE_MAX_NUM - 1; i++)
   {
-    inodes[i].valid = 0;
-    inodes[i].file_size = 0;
-    bzero(inodes[i].filename, 71);
+    inodes[i].inuse = 0;
+    inodes[i].filesize = 0;
+    bzero(inodes[i].filename, DFS_MAX_FILENAME_LENGTH);
     bzero((char *)inodes[i].direct_table, sizeof(inodes[i].direct_table));
-    inodes[i].num_indirect_blocks = 0;
-    inodes[i].num_double_indirect_blocks = 0;
+    inodes[i].indirect_block = 0;
+    inodes[i].double_indirect_block = 0;
   }
 
-
-
+  //FBV setup
   for(i = 0; i <= DFS_FBV_MAX_NUM_WORDS - 2; i++)
   {
     fbv[i] = 0xFFFFFFFF;
@@ -80,59 +87,61 @@ void main (int argc, char *argv[])
   
   fbv[DFS_FBV_MAX_NUM_WORDS - 1] = 0x7FFFFFFF;
 
-  for(i = 0; i <= 41; i++)
+  for(i = 0; i <= DFS_FBV_BLOCK_END; i++)
   {
     j = i / 32;
     mask_32 = invert((uint32)((0x1) << (i % 32)));
     fbv[j] = fbv[j] & mask_32; 
   }
 
-  // fbv[DFS_FBV_MAX_NUM_WORDS - 1] = fbv[DFS_FBV_MAX_NUM_WORDS - 1] & 0x7FFFFFFF; 
-
   sb.valid = 1;
 
   bzero(temp_block.data, DFS_BLOCKSIZE);
 
-  if(FdiskWriteBlock(0, &temp_block) == DFS_FAIL) {
-    // Printf("fdisk (%d): Error writing superblock to disk.\n", getpid());
+  Printf("sizeof inode %d\n ", sizeof(dfs_inode));
+
+  //Writing to boot record block
+  if(FdiskWriteBlock(FDISK_BOOT_FILESYSTEM_BLOCKNUM, &temp_block) == DFS_FAIL) {
+    Printf("fdisk: Error writing boot record to disk.\n");
     Exit();
   }
   
-  for(i = 42; i <= 65534; i++) {
-    if(FdiskWriteBlock(i, &temp_block) == DFS_FAIL) {
-      // Printf("fdisk (%d): Error writing zero blocks to disk.\n", getpid());
-      Exit();
-    }
-  }
+  // //Resetting all the data blocks
+  // for(i = 42; i <= 65534; i++) {
+  //   if(FdiskWriteBlock(i, &temp_block) == DFS_FAIL) {
+  //     // Printf("fdisk (%d): Error writing zero blocks to disk.\n", getpid());
+  //     Exit();
+  //   }
+  // }
+
+  //Writing superblock
   bcopy((char *)&sb, temp_block.data, sizeof(dfs_superblock));
-
-  if(FdiskWriteBlock(1, &temp_block) == DFS_FAIL) {
-    // Printf("fdisk (%d): Error writing superblock to disk.\n", getpid());
+  if(FdiskWriteBlock(DFS_SUPERBLOCK_BLOCKNUM, &temp_block) == DFS_FAIL) {
+    Printf("fdisk: Error writing superblock to disk\n");
+    Exit();
+  }
+  if(FdiskWriteBlock(DFS_REDUNDANT_SB_BLOCKNUM, &temp_block) == DFS_FAIL) {
+    Printf("fdisk: Error writing redundant superblock to disk\n");
     Exit();
   }
 
-  if(FdiskWriteBlock(65535, &temp_block) == DFS_FAIL) {
-    // Printf("fdisk (%d): Error writing superblock to disk.\n", getpid());
-    Exit();
-  }
-
-  for(i = 0; i <= 31; i++) {
-
+  //Writing inodes
+  for(i = 0; i < FDISK_INODE_NUM_BLOCKS; i++) {
     bzero(temp_block.data, sizeof(dfs_block));
     bcopy((char *)(inodes + (i * (DFS_BLOCKSIZE / 128))), temp_block.data, DFS_BLOCKSIZE);
 
     if(FdiskWriteBlock(FDISK_INODE_BLOCK_START + i, &temp_block) == DFS_FAIL) {
-      // Printf("fdisk (%d): Error writing inode blocks to disk.\n", getpid());
+      Printf("fdisk: Error writing inode blocks to disk.\n");
       Exit();
     }
   }
 
-  for(i = 0; i <= 7; i++) {
+
+  for(i = 0; i < DFS_FBV_NUM_BLCOKS; i++) {
     bzero(temp_block.data, sizeof(dfs_block));
     bcopy((char *)(fbv + (i * (DFS_BLOCKSIZE / 4))), temp_block.data, DFS_BLOCKSIZE);
-
     if(FdiskWriteBlock(FDISK_FBV_BLOCK_START + i, &temp_block) == DFS_FAIL) {
-      // Printf("fdisk (%d): Error writing fbv blocks to disk.\n", getpid());
+      Printf("fdisk: Error writing fbv blocks to disk.\n");
       Exit();
     }
   }

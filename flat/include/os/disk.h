@@ -2,7 +2,7 @@
 #define __DISK_H__
 
 // Name of file which represents the "hard disk"
-#define DISK_FILENAME "/tmp/ece69515.img"
+#define DISK_FILENAME "/tmp/niharika.img"
 
 // Number of bytes in one physical disk block
 #define DISK_BLOCKSIZE 256 
