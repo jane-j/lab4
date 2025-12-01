@@ -3,19 +3,13 @@
 
 #include "file_check.h"
 
-void main() {
-  unsigned int file_open(char *filename, char *mode);
-int file_close(unsigned int handle);
-int file_delete(char *filename);
-int file_read(unsigned int handle, void *mem, int num_bytes);
-int file_write(unsigned int handle, void *mem, int num_bytes);
-int file_seek(unsigned int handle, int num_bytes, int from_where);
+static char mem[2500];
 
-  int i, j, bytes = 1056;
-  char * mem;
+void main() {
+  int i, j, k, bytes = 1056;
   char * read_mem;
 
-  i = file_open("file_check.txt", "w");
+  i = file_open("file_check.txt", "a");
   if(i != -1) Printf("Opened file with handle %d\n", i);
   else {
     Printf("FAILED to open file\n");
@@ -23,7 +17,7 @@ int file_seek(unsigned int handle, int num_bytes, int from_where);
   }
 
   for(j = 0; j < bytes; j++) {
-    mem[j] = 'n';
+    mem[j] = j;
   }
 
   Printf("Writing %d bytes to the file with handle %d\n", bytes, i);
@@ -57,13 +51,11 @@ int file_seek(unsigned int handle, int num_bytes, int from_where);
     Printf("FAILED to read!\n");
     Exit();
   }
-
+  
   Printf("Comparing read data with written data...\n");
-  if(dstrncmp(mem, read_mem, bytes) == 0) {
-    Printf("Matches!\n");
-  } else {
-    Printf("FAILED: Doesn't match!\n");
-    Exit();
+  for(k = 0; k < bytes; k++) {
+    if(mem[k] != read_mem[k]) Printf("Mismatch at %d, Got %d, expected %d\n", k, read_mem[k], mem[k]);
+    else Printf("Matches: %d = %d at %d\n", read_mem[k], mem[k], k);
   }
 
   j = file_close(i);
