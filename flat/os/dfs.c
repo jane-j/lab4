@@ -1166,30 +1166,30 @@ int DfsInodeWriteBytes(int handle, void *mem, int start_byte, int num_bytes) {
     i = first_block;
     last_block = end_byte / sb.fs_blocksize;
 
-    for(i = 0; i <= first_block - 1; i++)
-    {
-      //printf("DfsInodeWriteBytes: Allocating physical blocks for the preceeding blocks\n");
-      phy_block = DfsInodeTranslateVirtualToFilesys(handle, i);
+    // for(i = 0; i <= first_block - 1; i++)
+    // {
+    //   //printf("DfsInodeWriteBytes: Allocating physical blocks for the preceeding blocks\n");
+    //   phy_block = DfsInodeTranslateVirtualToFilesys(handle, i);
       
-      if(phy_block == DFS_FAIL)
-      {
-        phy_block = DfsInodeAllocateVirtualBlock(handle, i);
+    //   if(phy_block == DFS_FAIL)
+    //   {
+    //     phy_block = DfsInodeAllocateVirtualBlock(handle, i);
 
-        if(phy_block == DFS_FAIL)
-        {
-          printf("DfsInodeWriteBytes: Failed to allocate block\n");
-          return DFS_FAIL;
-        }
+    //     if(phy_block == DFS_FAIL)
+    //     {
+    //       printf("DfsInodeWriteBytes: Failed to allocate block\n");
+    //       return DFS_FAIL;
+    //     }
 
-        bzero(temp.data, sb.fs_blocksize);
-        //printf("DfsInodeWriteBytes: Resetting the allocated physical block %d\n", phy_block);
-        if(DfsWriteBlock(phy_block, &temp) == DFS_FAIL)
-        {
-          printf("DfsInodeWriteBytes: Failed to write to block\n");
-          return DFS_FAIL;
-        }
-      }
-    }
+    //     bzero(temp.data, sb.fs_blocksize);
+    //     //printf("DfsInodeWriteBytes: Resetting the allocated physical block %d\n", phy_block);
+    //     if(DfsWriteBlock(phy_block, &temp) == DFS_FAIL)
+    //     {
+    //       printf("DfsInodeWriteBytes: Failed to write to block\n");
+    //       return DFS_FAIL;
+    //     }
+    //   }
+    // }
     
     while(i <= last_block)
     {

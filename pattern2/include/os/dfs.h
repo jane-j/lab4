@@ -7,8 +7,9 @@
 typedef struct cache_block { 
   char valid;
   char dirty;
-  int age;
-  int blocknum; 
+  char inuse; //for clock LIFO replacement 
+  int blocknum;
+  int idx;
   char data[DFS_BLOCKSIZE];
   Link *l;
 } cache_block;

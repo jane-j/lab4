@@ -11,6 +11,7 @@ static dfs_superblock sb; // superblock
 static dfs_inode inodes[DFS_INODE_MAX_NUM]; // all inodes
 static uint32 fbv[DFS_FBV_MAX_NUM_WORDS]; // Free block vector
 static cache_block cache[CACHE_SIZE]; // cache blocks
+Queue cache_queue;
 
 ////////////////////////////////////////////
 
@@ -19,16 +20,11 @@ static int num_disk_writes;
 static int num_hits;
 static int num_total_accesses;
 static double avg_miss_latency;
-static int age_global;
 
 //////////////////////////////////////////////
 
 static int last_blocknum_read;
-static int cur_wnd_read;
-static Queue prefetch_queue_read;
 static int last_blocknum_write;
-static int cur_wnd_write;
-static Queue prefetch_queue_write;
 static char not_translation;
 
 ////////////////////////////////////////////////
@@ -68,25 +64,23 @@ void DfsModuleInit() {
   num_hits = 0;
   num_total_accesses = 0;
   avg_miss_latency = 0.0;
-  age_global = 0;
+
+  AQueueInit(&cache_queue);
 
   for(i = 0; i < CACHE_SIZE; i++)
   {
     cache[i].valid = 0;
     cache[i].dirty = 0;
-    cache[i].age = 0;
+    cache[i].inuse = 0;
     cache[i].blocknum = 0; 
+    cache[i].idx = i;
     bzero(cache[i].data, DFS_BLOCKSIZE);
     cache[i].l = NULL;
+    if ((cache[i].l = AQueueAllocLink(&(cache[i]))) == NULL) {
+      printf("DfsModuleInit: could not allocate link for cache block!\n");
+      GracefulExit();
+    }
   }
-
-  last_blocknum_read = -1;
-  cur_wnd_read = DEF_WND;
-  AQueueInit(&prefetch_queue_read);
-  last_blocknum_write = -1;
-  cur_wnd_write = DEF_WND;
-  AQueueInit(&prefetch_queue_write);
-  not_translation = 1;
 
   DfsInvalidate();
   DfsOpenFileSystem();
@@ -195,7 +189,6 @@ int DfsOpenFileSystem() {
   num_hits = 0;
   num_total_accesses = 0;
   avg_miss_latency = 0.0;
-  age_global = 0;
   //printf("DfsOpenFileSystem: Successfully opened the filesystem\n");
   return DFS_SUCCESS;
 }
@@ -355,12 +348,23 @@ int DfsFreeBlock(int blocknum) {
     return DFS_FAIL;
   }
 
-  for(idx = 0; idx <= CACHE_SIZE - 1; idx++)
+  for(idx = 0; idx < CACHE_SIZE; idx++)
   {
     if(cache[idx].valid == 1 && cache[idx].blocknum == blocknum)
     {
       cache[idx].valid = 0;
       cache[idx].dirty = 0;
+      printf("DfsFreeBlock: Removing cache block %d with blocknum %d\n", idx, blocknum);
+      //Remove link from queue
+      if (AQueueRemove(&(cache[idx].l)) != QUEUE_SUCCESS) {
+        printf("DfsFreeBlock FATAL ERROR: could not remove cache block from cache queue\n");
+        GracefulExit();
+      }
+      //Allocate a new link
+      if ((cache[idx].l = AQueueAllocLink(&cache[idx])) == NULL) {
+        printf("DfsCacheReplacementPolicy FATAL ERROR: could not get link for cache block from cache queue\n");
+        GracefulExit();
+      }
       break;
     }
   } 
@@ -392,8 +396,6 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
   int fbv_idx = blocknum / 32;
   double latency, miss_time;
 
-  age_global++;
-
   if(sb.valid == 0)
   {
     return DFS_FAIL;
@@ -413,12 +415,12 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
   if(cache_handle != DFS_FAIL)
   {
     printf("DfsReadBlock: Cache hit!\n");
+    cache[cache_handle].inuse = 1;
     bcopy(cache[cache_handle].data, b->data, sb.fs_blocksize);
     // for(i = 0; i < 10; i++) {
     //   printf("DfsReadBlock: Reading from cache[%d].data[%d] = %d\n", cache_handle, i, cache[cache_handle].data[i]);
     // }
-    cache[cache_handle].age = age_global;
-    printf("DfsReadBlock: Updated age %d\n", cache[cache_handle].age);
+    //printf("DfsReadBlock: Updated age %d\n", cache[cache_handle].age);
     //AQueueRemove(&(cache[cache_handle].l));
 
     if(not_translation != 0)
@@ -441,17 +443,20 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
   cache_handle = DfsCacheAllocateSlot(blocknum);
   if(cache_handle == DFS_FAIL)
   {
+    printf("DfsReadBlock: Couldn't allocate cache slot\n");
     return DFS_FAIL;
   }
+  printf("DfsReadBlock: Allocated cache slot %d\n", cache_handle);
   cache[cache_handle].valid = 1;
+  cache[cache_handle].inuse = 1;
   cache[cache_handle].dirty = 0;
   cache[cache_handle].blocknum = blocknum;
   bcopy(b->data, cache[cache_handle].data, sb.fs_blocksize);
   // for(i = 0; i < 10; i++) {
   //   printf("DfsReadBlock: Writing to cache[%d].data[%d] = %d\n", cache_handle, i, cache[cache_handle].data[i]);
   // }
-  cache[cache_handle].age = age_global;
-  printf("DfsReadBlock: Updated age %d\n", cache[cache_handle].age);
+  
+  //printf("DfsReadBlock: Updated age %d\n", cache[cache_handle].age);
 
   // Added for bulk read ////////////////////////////////////////////
 //   if(not_translation != 0)
@@ -516,6 +521,7 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
   printf("Cache Miss: Hit Rate = %.3f%%, Miss Rate = %.3f%%, ", hit_rate, miss_rate);
   printf("Disk Reads = %d, Disk Writes = %d,", num_disk_reads, num_disk_writes);
   printf("Miss Handling Latency = %fms\n", avg_miss_latency);
+  printf("total num accesses %d\n", num_total_accesses);
 
   if(not_translation != 0)
   {
@@ -589,8 +595,6 @@ int DfsWriteBlock(int blocknum, dfs_block *b){
   int cache_handle_temp;
   int fbv_idx = blocknum / 32;
 
-  age_global++;
-
   if(sb.valid == 0)
   {
     return DFS_FAIL;
@@ -615,13 +619,13 @@ int DfsWriteBlock(int blocknum, dfs_block *b){
   if(cache_handle != DFS_FAIL)
   {
     printf("DfsWriteBlock: Cache hit!\n");
+    cache[cache_handle].inuse = 1;
     bcopy(b->data, cache[cache_handle].data, sb.fs_blocksize);
     // for(i = 0; i < 10; i++) {
     //   printf("DfsWriteBlock: Writing to cache[%d].data[%d] = %d\n", cache_handle, i, cache[cache_handle].data[i]);
     // }
     cache[cache_handle].dirty = 1;
-    cache[cache_handle].age = age_global;
-    printf("DfsWriteBlock: Updated age %d\n", cache[cache_handle].age);
+    //printf("DfsWriteBlock: Updated age %d\n", cache[cache_handle].age);
     //AQueueRemove(&(cache[cache_handle].l));
     if(not_translation != 0)
     {
@@ -645,7 +649,6 @@ int DfsWriteBlock(int blocknum, dfs_block *b){
     printf("DfsWriteBlock: Couldn't allocate cache slot\n"); 
     return DFS_FAIL;
   }
-
   printf("DfsWriteBlock: Allocated cache slot %d\n", cache_handle); 
 
   bcopy(temp->data, cache[cache_handle].data, sb.fs_blocksize);
@@ -653,13 +656,13 @@ int DfsWriteBlock(int blocknum, dfs_block *b){
   //   printf("DfsWriteBlock: Loading to cache[%d].data[%d] = %d\n", cache_handle, i, cache[cache_handle].data[i]);
   cache[cache_handle].valid = 1;
   cache[cache_handle].dirty = 1;
+  cache[cache_handle].inuse = 1;
   cache[cache_handle].blocknum = blocknum;
   bcopy(b->data, cache[cache_handle].data, sb.fs_blocksize);
   // for(i = 0; i < 10; i++)
   //   printf("DfsWriteBlock: Writing to cache[%d].data[%d] = %d\n", cache_handle, i, cache[cache_handle].data[i]);
   total_bytes_written = sb.fs_blocksize;
-  cache[cache_handle].age = age_global;
-  printf("DfsWriteBlock: Updated age %d\n", cache[cache_handle].age);
+  //printf("DfsWriteBlock: Updated age %d\n", cache[cache_handle].age);
 
   // Added for bulk write ////////////////////////////////////////////
   // if(not_translation != 0)
@@ -716,6 +719,7 @@ int DfsWriteBlock(int blocknum, dfs_block *b){
   printf("Cache Miss: Hit Rate = %.3f%%, Miss Rate = %.3f%%, ", hit_rate, miss_rate);
   printf("Disk Reads = %d, Disk Writes = %d, ", num_disk_reads, num_disk_writes);
   printf("Miss Handling Latency = %fms\n", avg_miss_latency);
+  printf("total num accesses %d\n", num_total_accesses);
   // if(not_translation != 0)
   // {
   //   last_blocknum_write = blocknum;
@@ -1166,30 +1170,30 @@ int DfsInodeWriteBytes(int handle, void *mem, int start_byte, int num_bytes) {
     i = first_block;
     last_block = end_byte / sb.fs_blocksize;
 
-    for(i = 0; i <= first_block - 1; i++)
-    {
-      //printf("DfsInodeWriteBytes: Allocating physical blocks for the preceeding blocks\n");
-      phy_block = DfsInodeTranslateVirtualToFilesys(handle, i);
+    // for(i = 0; i <= first_block - 1; i++)
+    // {
+    //   //printf("DfsInodeWriteBytes: Allocating physical blocks for the preceeding blocks\n");
+    //   phy_block = DfsInodeTranslateVirtualToFilesys(handle, i);
       
-      if(phy_block == DFS_FAIL)
-      {
-        phy_block = DfsInodeAllocateVirtualBlock(handle, i);
+    //   if(phy_block == DFS_FAIL)
+    //   {
+    //     phy_block = DfsInodeAllocateVirtualBlock(handle, i);
 
-        if(phy_block == DFS_FAIL)
-        {
-          printf("DfsInodeWriteBytes: Failed to allocate block\n");
-          return DFS_FAIL;
-        }
+    //     if(phy_block == DFS_FAIL)
+    //     {
+    //       printf("DfsInodeWriteBytes: Failed to allocate block\n");
+    //       return DFS_FAIL;
+    //     }
 
-        bzero(temp.data, sb.fs_blocksize);
-        //printf("DfsInodeWriteBytes: Resetting the allocated physical block %d\n", phy_block);
-        if(DfsWriteBlock(phy_block, &temp) == DFS_FAIL)
-        {
-          printf("DfsInodeWriteBytes: Failed to write to block\n");
-          return DFS_FAIL;
-        }
-      }
-    }
+    //     bzero(temp.data, sb.fs_blocksize);
+    //     //printf("DfsInodeWriteBytes: Resetting the allocated physical block %d\n", phy_block);
+    //     if(DfsWriteBlock(phy_block, &temp) == DFS_FAIL)
+    //     {
+    //       printf("DfsInodeWriteBytes: Failed to write to block\n");
+    //       return DFS_FAIL;
+    //     }
+    //   }
+    // }
     
     while(i <= last_block)
     {
@@ -1259,7 +1263,7 @@ int DfsInodeWriteBytes(int handle, void *mem, int start_byte, int num_bytes) {
 
     if((start_byte + total_bytes_written) > inodes[handle].filesize)
     {
-      inodes[handle].filesize += (start_byte + total_bytes_written - inodes[handle].filesize);
+      inodes[handle].filesize = start_byte + total_bytes_written;
     }
     
     return total_bytes_written;
@@ -1649,18 +1653,22 @@ int DfsCacheAllocateSlot(int blocknum) {
   
   for(i = index; i < (index + CACHE_WAYS); i++)
   {
-    if(cache[i].valid == 0)
+    if((cache[i].valid == 0) && (cache[i].l->queue != &cache_queue))
     {
-        if(LockHandleRelease(cache_lock) != SYNC_SUCCESS)
-        {
-            printf("DfsCacheAllocateSlot: Lock release failed\n");
-            return DFS_FAIL;
-        }
-        return i;
+      if (AQueueInsertLast(&cache_queue, cache[i].l) != QUEUE_SUCCESS) {
+        printf("DfsCacheAllocateSlot: could not insert cache block into queue!\n");
+        GracefulExit();
+      }
+      if(LockHandleRelease(cache_lock) != SYNC_SUCCESS)
+      {
+        printf("DfsCacheAllocateSlot: Lock release failed\n");
+        return DFS_FAIL;
+      }
+      return i;
     }
   }
 
-  cache_line = DfsCacheReplacementPolicy(blocknum);
+  cache_line = DfsCacheReplacementPolicy();
   if(cache_line == DFS_FAIL)
   {
     printf("DfsCacheAllocateSlot: No cache line allocated by replacement policy!\n");
@@ -1720,6 +1728,13 @@ int DfsCacheFlush() {
       cache[i].dirty = 0;
     }
     cache[i].valid = 0;
+    if((cache[i].l != NULL) && (cache[i].l->queue == &cache_queue))
+    {
+      if (AQueueRemove(&(cache[i].l)) != QUEUE_SUCCESS) {
+        printf("DfsCacheFlush FATAL ERROR: could not remove cache block from cache queue\n");
+        GracefulExit();
+      }
+    }
   }
 
   if(LockHandleRelease(cache_lock) == SYNC_FAIL)
@@ -1732,21 +1747,81 @@ int DfsCacheFlush() {
 }
 
 
-int DfsCacheReplacementPolicy(int blocknum) {
+int DfsCacheReplacementPolicy() {
   //LRU
-  int i;
-  int index = blocknum & CACHE_IDX_MASK;
-  int cache_line = -1;
-  int min = age_global;
+  // int i;
+  // int index = blocknum & CACHE_IDX_MASK;
+  // int cache_line = -1;
+  // int min = age_global;
 
-  for(i = index; i < (index + CACHE_WAYS); i++)
+  // for(i = index; i < (index + CACHE_WAYS); i++)
+  // {
+  //   if(cache[i].age < min)
+  //   {
+  //     min = cache[i].age;
+  //     cache_line = i;
+  //   }
+  // }
+
+  // return cache_line;
+
+  int last_idx = DFS_FAIL;
+  cache_block * c;
+
+  //check from end of the queue
+  c = (cache_block *) AQueueObject(AQueueLast (&cache_queue)); 
+  if(c->valid == 0) 
   {
-    if(cache[i].age < min)
-    {
-      min = cache[i].age;
-      cache_line = i;
-    }
+    printf("DfsCacheReplacementPolicy: FATAL error, block is free! %d\n", c->idx);
+    GracefulExit();
   }
 
-  return cache_line;
+  if(c->inuse == 1)
+  {
+    last_idx = c->idx;
+    c->inuse = 0;
+  } else 
+  {
+    //No need to remove link from queue
+    return c->idx;
+  }
+
+  //Till we reach the first element
+  while(AQueuePrev(c->l) != NULL)
+  {
+    c = (cache_block *) AQueueObject(AQueuePrev (c->l));
+    if(c->valid == 0) 
+    {
+      printf("DfsCacheReplacementPolicy: FATAL error, block is free!\n");
+      GracefulExit();
+    }
+    if(c->inuse == 1)
+    {
+      c->inuse = 0;
+    } 
+    else 
+    {
+      //Remove link from cache queue
+      if (AQueueRemove(&(c->l)) != QUEUE_SUCCESS) {
+        printf("DfsCacheReplacementPolicy FATAL ERROR: could not remove cache block from cache queue\n");
+        GracefulExit();
+      }
+      //Allocate a new link
+      if ((c->l = AQueueAllocLink(c)) == NULL) {
+        printf("DfsCacheReplacementPolicy FATAL ERROR: could not get link for cache block from cache queue\n");
+        GracefulExit();
+      }
+      //Insert it at the end
+      if (AQueueInsertLast(&cache_queue, c->l) != QUEUE_SUCCESS) {
+        printf("DfsCacheReplacementPolicy: could not insert cache block into queue!\n");
+        GracefulExit();
+      }
+      return c->idx;
+    }
+
+  }
+
+  //Couldn't find any other blocks, so return last_idx
+  return last_idx;
+  
 }
