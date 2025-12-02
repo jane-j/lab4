@@ -19,7 +19,7 @@ static int num_disk_writes;
 static int num_hits;
 static int num_total_accesses;
 static double avg_miss_latency;
-static int age_global;
+static uint32 age_global;
 
 //////////////////////////////////////////////
 
@@ -392,8 +392,6 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
   int fbv_idx = blocknum / 32;
   double latency, miss_time;
 
-  age_global++;
-
   if(sb.valid == 0)
   {
     return DFS_FAIL;
@@ -409,6 +407,8 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
     return DFS_FAIL;
   }
 
+  age_global++;
+
   cache_handle = DfsCacheHit(blocknum);  
   if(cache_handle != DFS_FAIL)
   {
@@ -418,7 +418,7 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
     //   printf("DfsReadBlock: Reading from cache[%d].data[%d] = %d\n", cache_handle, i, cache[cache_handle].data[i]);
     // }
     cache[cache_handle].age = age_global;
-    printf("DfsReadBlock: Updated age %d\n", cache[cache_handle].age);
+    printf("DfsReadBlock: Cache Updated age %d\n", cache[cache_handle].age);
     //AQueueRemove(&(cache[cache_handle].l));
 
     if(not_translation != 0)
@@ -451,7 +451,7 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
   //   printf("DfsReadBlock: Writing to cache[%d].data[%d] = %d\n", cache_handle, i, cache[cache_handle].data[i]);
   // }
   cache[cache_handle].age = age_global;
-  printf("DfsReadBlock: Updated age %d\n", cache[cache_handle].age);
+  printf("DfsReadBlock: Cache Updated age %d\n", cache[cache_handle].age);
 
   // Added for bulk read ////////////////////////////////////////////
 //   if(not_translation != 0)
@@ -514,7 +514,7 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
   hit_rate = (double) num_hits / (double) num_total_accesses * 100;
   miss_rate = 100.0 - hit_rate;
   printf("Cache Miss: Hit Rate = %.3f%%, Miss Rate = %.3f%%, ", hit_rate, miss_rate);
-  printf("Disk Reads = %d, Disk Writes = %d,", num_disk_reads, num_disk_writes);
+  printf("Disk Reads = %d, Disk Writes = %d, ", num_disk_reads, num_disk_writes);
   printf("Miss Handling Latency = %fms\n", avg_miss_latency);
 
   if(not_translation != 0)
@@ -589,8 +589,6 @@ int DfsWriteBlock(int blocknum, dfs_block *b){
   int cache_handle_temp;
   int fbv_idx = blocknum / 32;
 
-  age_global++;
-
   if(sb.valid == 0)
   {
     return DFS_FAIL;
@@ -610,6 +608,8 @@ int DfsWriteBlock(int blocknum, dfs_block *b){
     return DFS_FAIL;
   }
 
+  age_global++;
+
   //Check in cache 
   cache_handle = DfsCacheHit(blocknum);
   if(cache_handle != DFS_FAIL)
@@ -621,7 +621,7 @@ int DfsWriteBlock(int blocknum, dfs_block *b){
     // }
     cache[cache_handle].dirty = 1;
     cache[cache_handle].age = age_global;
-    printf("DfsWriteBlock: Updated age %d\n", cache[cache_handle].age);
+    printf("DfsWriteBlock: Cache Updated age %d\n", cache[cache_handle].age);
     //AQueueRemove(&(cache[cache_handle].l));
     if(not_translation != 0)
     {
@@ -659,7 +659,7 @@ int DfsWriteBlock(int blocknum, dfs_block *b){
   //   printf("DfsWriteBlock: Writing to cache[%d].data[%d] = %d\n", cache_handle, i, cache[cache_handle].data[i]);
   total_bytes_written = sb.fs_blocksize;
   cache[cache_handle].age = age_global;
-  printf("DfsWriteBlock: Updated age %d\n", cache[cache_handle].age);
+  printf("DfsWriteBlock: Cache Updated age %d\n", cache[cache_handle].age);
 
   // Added for bulk write ////////////////////////////////////////////
   // if(not_translation != 0)

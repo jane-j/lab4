@@ -519,7 +519,7 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
   hit_rate = (double) num_hits / (double) num_total_accesses * 100;
   miss_rate = 100.0 - hit_rate;
   printf("Cache Miss: Hit Rate = %.3f%%, Miss Rate = %.3f%%, ", hit_rate, miss_rate);
-  printf("Disk Reads = %d, Disk Writes = %d,", num_disk_reads, num_disk_writes);
+  printf("Disk Reads = %d, Disk Writes = %d, ", num_disk_reads, num_disk_writes);
   printf("Miss Handling Latency = %fms\n", avg_miss_latency);
   printf("total num accesses %d\n", num_total_accesses);
 

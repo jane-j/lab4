@@ -228,6 +228,7 @@ void main(int argc, char *argv[]) {
 
 //------------------------- Pattern 3 -------------------------
   Printf("cachtest: Starting Pattern 3\n");
+  lcg_seed = 1;
   error_count = 0;
   for (i = 0; i < P3_NUM_REQUESTS*2; i++) {
     r = get_num(1000); 
