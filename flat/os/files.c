@@ -408,8 +408,8 @@ int FileRename(char *oldname, char *newname) {
     int file_h;
     int newname_len = dstrlen(newname);
 
-    // Check that new name doesn't already exist
-    if(FileNameExists(newname) != FILE_FAIL) {
+    // Check that new name doesn't already exist at inode level
+    if(DfsInodeFilenameExists(newname) != DFS_FAIL) {
         return FILE_FAIL;
     }
 
@@ -418,20 +418,18 @@ int FileRename(char *oldname, char *newname) {
         return FILE_FAIL;
     }
 
-    // Update file descriptor if file is open
+    // Update file descriptor if file is currently open
     file_h = FileNameExists(oldname);
-    if(file_h == FILE_FAIL) {
-        return FILE_FAIL;
-    }
+    if(file_h != FILE_FAIL) {
+        if(newname_len > FILE_MAX_FILENAME_LENGTH)
+        {
+            newname_len = FILE_MAX_FILENAME_LENGTH;
+        }
 
-    if(newname_len > FILE_MAX_FILENAME_LENGTH)
-    {
-        newname_len = FILE_MAX_FILENAME_LENGTH;
+        // Update filename in descriptor
+        bzero(files[file_h].filename, FILE_MAX_FILENAME_LENGTH);
+        dstrncpy(files[file_h].filename, newname, newname_len);
     }
-
-    // Update filename in descriptor
-    bzero(files[file_h].filename, FILE_MAX_FILENAME_LENGTH);
-    dstrncpy(files[file_h].filename, newname, newname_len);
     
     return FILE_SUCCESS;
 }

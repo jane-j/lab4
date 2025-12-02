@@ -64,6 +64,7 @@ int file_delete(char *filename);
 int file_read(unsigned int handle, void *mem, int num_bytes);
 int file_write(unsigned int handle, void *mem, int num_bytes);
 int file_seek(unsigned int handle, int num_bytes, int from_where);
+int file_rename(char *oldname, char *newname);
 
 
 

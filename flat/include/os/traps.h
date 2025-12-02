@@ -98,6 +98,7 @@
 #define TRAP_FILE_READ          0x475
 #define TRAP_FILE_WRITE         0x476
 #define TRAP_FILE_SEEK          0x477
+#define TRAP_FILE_RENAME        0x478
 
 // Misc. Traps
 #define TRAP_TESTOS             0x4FF

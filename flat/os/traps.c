@@ -220,6 +220,53 @@ int TrapFileWriteHandler(uint32 *trapArgs, int sysMode) {
 
 }
 
+// file_rename(char *oldname, char *newname)
+int TrapFileRenameHandler(uint32 *trapArgs, int sysMode) {
+  char oldname[FILE_MAX_FILENAME_LENGTH];
+  char newname[FILE_MAX_FILENAME_LENGTH];
+  char *user_oldname = NULL;
+  char *user_newname = NULL;
+  int i;
+
+  // If we're not in system mode, we need to copy everything from the
+  // user-space virtual address to the kernel space address
+  if (!sysMode) {
+    // Get the arguments themselves into system space
+    // Argument 0: userland pointer to old filename string
+    MemoryCopyUserToSystem (currentPCB, (trapArgs+0), &user_oldname, sizeof(uint32));
+    // Argument 1: userland pointer to new filename string
+    MemoryCopyUserToSystem (currentPCB, (trapArgs+1), &user_newname, sizeof(uint32));
+
+    // Now copy userland old filename string into our buffer
+    for(i=0; i<FILE_MAX_FILENAME_LENGTH; i++) {
+      MemoryCopyUserToSystem(currentPCB, (user_oldname+i), &(oldname[i]), sizeof(char));
+      // Check for end of user-space string
+      if (oldname[i] == '\0') break;
+    }
+    if (i == FILE_MAX_FILENAME_LENGTH) {
+      printf("TrapFileRenameHandler: length of old filename longer than allowed!\n");
+      GracefulExit();
+    }
+
+    // Now copy userland new filename string into our buffer
+    for(i=0; i<FILE_MAX_FILENAME_LENGTH; i++) {
+      MemoryCopyUserToSystem(currentPCB, (user_newname+i), &(newname[i]), sizeof(char));
+      // Check for end of user-space string
+      if (newname[i] == '\0') break;
+    }
+    if (i == FILE_MAX_FILENAME_LENGTH) {
+      printf("TrapFileRenameHandler: length of new filename longer than allowed!\n");
+      GracefulExit();
+    }
+  } else {
+    // Already in kernel space, no address translation necessary
+    dstrncpy(oldname, (char *)(trapArgs[0]), FILE_MAX_FILENAME_LENGTH);
+    dstrncpy(newname, (char *)(trapArgs[1]), FILE_MAX_FILENAME_LENGTH);
+  }
+
+  return FileRename(oldname, newname);
+}
+
 // file_seek(uint32 handle, int num_bytes, int from_where)
 int TrapFileSeekHandler(uint32 *trapArgs, int sysMode) {
   uint32 handle;
@@ -763,6 +810,9 @@ dointerrupt (unsigned int cause, unsigned int iar, unsigned int isr,
       break;
     case TRAP_FILE_SEEK:
         ProcessSetResult(currentPCB, TrapFileSeekHandler(trapArgs, isr & DLX_STATUS_SYSMODE));
+      break;
+    case TRAP_FILE_RENAME:
+        ProcessSetResult(currentPCB, TrapFileRenameHandler(trapArgs, isr & DLX_STATUS_SYSMODE));
       break;
 
     // Traps for running OS testing code

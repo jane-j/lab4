@@ -330,6 +330,14 @@ _file_seek:
 	nop
 .endproc _file_seek
 
+.proc _file_rename
+.global _file_rename
+_file_rename:
+	trap	#0x478
+	jr	r31
+	nop
+.endproc _file_rename
+
 .proc _run_os_tests
 .global _run_os_tests
 _run_os_tests:

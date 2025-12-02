@@ -1347,6 +1347,7 @@ int DfsInodeAllocateVirtualBlock(int handle, int virtual_blocknum) {
       bzero(temp1.data, sb.fs_blocksize);
 
       not_translation = 0;
+      // if(DfsWriteBlockUncached(inodes[handle].indirect_block, &temp1) == DFS_FAIL) 
       if(DfsWriteBlock(inodes[handle].indirect_block, &temp1) == DFS_FAIL)
       {
         not_translation = 1;
