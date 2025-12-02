@@ -20,16 +20,7 @@ static int num_hits;
 static int num_total_accesses;
 static double avg_miss_latency;
 static uint32 age_global;
-
-//////////////////////////////////////////////
-
-static int last_blocknum_read;
-static int cur_wnd_read;
-static Queue prefetch_queue_read;
-static int last_blocknum_write;
-static int cur_wnd_write;
-static Queue prefetch_queue_write;
-static char not_translation;
+static double latency;
 
 ////////////////////////////////////////////////
 
@@ -69,6 +60,7 @@ void DfsModuleInit() {
   num_total_accesses = 0;
   avg_miss_latency = 0.0;
   age_global = 0;
+  latency = 0.0;
 
   for(i = 0; i < CACHE_SIZE; i++)
   {
@@ -79,14 +71,6 @@ void DfsModuleInit() {
     bzero(cache[i].data, DFS_BLOCKSIZE);
     cache[i].l = NULL;
   }
-
-  last_blocknum_read = -1;
-  cur_wnd_read = DEF_WND;
-  AQueueInit(&prefetch_queue_read);
-  last_blocknum_write = -1;
-  cur_wnd_write = DEF_WND;
-  AQueueInit(&prefetch_queue_write);
-  not_translation = 1;
 
   DfsInvalidate();
   DfsOpenFileSystem();
@@ -196,6 +180,7 @@ int DfsOpenFileSystem() {
   num_total_accesses = 0;
   avg_miss_latency = 0.0;
   age_global = 0;
+  latency = 0.0;
   //printf("DfsOpenFileSystem: Successfully opened the filesystem\n");
   return DFS_SUCCESS;
 }
@@ -390,7 +375,7 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
   dfs_block * temp;
   int cache_handle_temp;
   int fbv_idx = blocknum / 32;
-  double latency, miss_time;
+  double miss_time;
 
   if(sb.valid == 0)
   {
@@ -408,6 +393,7 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
   }
 
   age_global++;
+  latency = 0.0;
 
   cache_handle = DfsCacheHit(blocknum);  
   if(cache_handle != DFS_FAIL)
@@ -419,12 +405,7 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
     // }
     cache[cache_handle].age = age_global;
     printf("DfsReadBlock: Cache Updated age %d\n", cache[cache_handle].age);
-    //AQueueRemove(&(cache[cache_handle].l));
-
-    if(not_translation != 0)
-    {
-      last_blocknum_read = blocknum;
-    }
+    
     return sb.fs_blocksize;
   }
 
@@ -453,59 +434,6 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
   cache[cache_handle].age = age_global;
   printf("DfsReadBlock: Cache Updated age %d\n", cache[cache_handle].age);
 
-  // Added for bulk read ////////////////////////////////////////////
-//   if(not_translation != 0)
-//   {
-//     if(blocknum == last_blocknum_read + 1)
-//     {
-//       cur_wnd_read = ((cur_wnd_read * 2) > MAX_WND) ? MAX_WND : (cur_wnd_read * 2);
-//     }
-//     else 
-//     {
-//       cur_wnd_read = DEF_WND;
-//       while (!AQueueEmpty(&prefetch_queue_read)) {
-//         c = (cache_block *)AQueueObject(AQueueFirst(&prefetch_queue_read));
-//         c->valid = 0;
-//         c->dirty = 0;
-//         if (AQueueRemove(&(c->l)) != QUEUE_SUCCESS)
-//         {
-//           return DFS_FAIL;
-//         }
-//       }
-//     }
-
-//     for(i = blocknum + 1; i <= blocknum + cur_wnd_read - 1; i++)
-//     {
-//       if(DfsReadBlockUncached(i, temp) == DFS_FAIL)
-//       {
-//         LockHandleRelease(cache_lock);
-//         return DFS_FAIL;
-//       }
-
-//       cache_handle_temp = DfsCacheAllocateSlot(i);
-
-//       if(cache_handle_temp == DFS_FAIL)
-//       {
-//         LockHandleRelease(cache_lock);
-//         return DFS_FAIL;
-//       }
-      
-//       cache[cache_handle_temp].valid = 1;
-//       cache[cache_handle_temp].dirty = 0;
-//       cache[cache_handle_temp].blocknum = i;
-//       bcopy(temp->data, cache[cache_handle_temp].data, sb.fs_blocksize);
-//       cache[cache_handle_temp].timestamp = latency_time;
-
-//       if ((cache[cache_handle_temp].l = AQueueAllocLink(&cache[cache_handle_temp])) == NULL)
-//       {
-//         return DFS_FAIL;
-//       }
-//       if (AQueueInsertLast(&prefetch_queue_read, cache[cache_handle_temp].l) != QUEUE_SUCCESS)
-//       {
-//         return DFS_FAIL;
-//       }
-//     }
-//   }
   /////////////////////////////////////////////////////////////////
   latency += (ClkGetCurTime() - miss_time);
   avg_miss_latency = avg_miss_latency + (latency - avg_miss_latency) / (num_total_accesses - num_hits);
@@ -517,10 +445,6 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
   printf("Disk Reads = %d, Disk Writes = %d, ", num_disk_reads, num_disk_writes);
   printf("Miss Handling Latency = %fms\n", avg_miss_latency);
 
-  if(not_translation != 0)
-  {
-    last_blocknum_read = blocknum;
-  }
   return total_bytes_read;
 }
 
@@ -580,7 +504,7 @@ int DfsReadBlockUncached(int blocknum, dfs_block *b) {
 int DfsWriteBlock(int blocknum, dfs_block *b){
   int cache_handle;
   int total_bytes_written;
-  double latency, miss_time;
+  double miss_time;
   int miss_latency_int;
   double hit_rate, miss_rate;
   int i;
@@ -609,6 +533,7 @@ int DfsWriteBlock(int blocknum, dfs_block *b){
   }
 
   age_global++;
+  latency = 0.0;
 
   //Check in cache 
   cache_handle = DfsCacheHit(blocknum);
@@ -622,11 +547,7 @@ int DfsWriteBlock(int blocknum, dfs_block *b){
     cache[cache_handle].dirty = 1;
     cache[cache_handle].age = age_global;
     printf("DfsWriteBlock: Cache Updated age %d\n", cache[cache_handle].age);
-    //AQueueRemove(&(cache[cache_handle].l));
-    if(not_translation != 0)
-    {
-      last_blocknum_write = blocknum;
-    }
+
     return sb.fs_blocksize;
   }
   miss_time = ClkGetCurTime();
@@ -661,52 +582,6 @@ int DfsWriteBlock(int blocknum, dfs_block *b){
   cache[cache_handle].age = age_global;
   printf("DfsWriteBlock: Cache Updated age %d\n", cache[cache_handle].age);
 
-  // Added for bulk write ////////////////////////////////////////////
-  // if(not_translation != 0)
-  // {
-  //   if(blocknum == last_blocknum_write + 1)
-  //   {
-  //     cur_wnd_write = ((cur_wnd_write * 2) > MAX_WND) ? MAX_WND : (cur_wnd_write * 2);
-  //   }
-  //   else 
-  //   {
-  //     cur_wnd_write = DEF_WND;
-  //     while (!AQueueEmpty(&prefetch_queue_write)) {
-  //       c = (cache_block *)AQueueObject(AQueueFirst(&prefetch_queue_write));
-  //       c->valid = 0;
-  //       c->dirty = 0;
-  //       if (AQueueRemove(&(c->l)) != QUEUE_SUCCESS)
-  //       {
-  //         return DFS_FAIL;
-  //       }
-  //     }
-  //   }
-
-  //   for(i = blocknum + 1; i <= blocknum + cur_wnd_write - 1; i++)
-  //   {
-  //     cache_handle_temp = DfsCacheAllocateSlot(i);
-
-  //     if(cache_handle_temp == DFS_FAIL)
-  //     {
-  //       LockHandleRelease(cache_lock);
-  //       return DFS_FAIL;
-  //     }
-      
-  //     cache[cache_handle_temp].valid = 1;
-  //     cache[cache_handle_temp].dirty = 0;
-  //     cache[cache_handle_temp].blocknum = i;
-  //     cache[cache_handle_temp].timestamp = latency_time;
-
-  //     if ((cache[cache_handle_temp].l = AQueueAllocLink(&cache[cache_handle_temp])) == NULL)
-  //     {
-  //       return DFS_FAIL;
-  //     }
-  //     if (AQueueInsertLast(&prefetch_queue_write, cache[cache_handle_temp].l) != QUEUE_SUCCESS)
-  //     {
-  //       return DFS_FAIL;
-  //     }
-  //   }
-  // }
   /////////////////////////////////////////////////////////////////
   latency += (ClkGetCurTime() - miss_time);
   avg_miss_latency = avg_miss_latency + (latency - avg_miss_latency) / (num_total_accesses - num_hits);
@@ -716,10 +591,7 @@ int DfsWriteBlock(int blocknum, dfs_block *b){
   printf("Cache Miss: Hit Rate = %.3f%%, Miss Rate = %.3f%%, ", hit_rate, miss_rate);
   printf("Disk Reads = %d, Disk Writes = %d, ", num_disk_reads, num_disk_writes);
   printf("Miss Handling Latency = %fms\n", avg_miss_latency);
-  // if(not_translation != 0)
-  // {
-  //   last_blocknum_write = blocknum;
-  // }
+
   return total_bytes_written;
 }
 
@@ -941,9 +813,9 @@ int DfsInodeDelete(int handle) {
 
     if(inodes[handle].indirect_block != 0)
     {
-      not_translation = 0;
+      
       dfs_block_size = DfsReadBlock(inodes[handle].indirect_block, &temp1);
-      not_translation = 1;
+      
       if(dfs_block_size == DFS_FAIL)
       {
         LockHandleRelease(inode_lock);
@@ -977,9 +849,9 @@ int DfsInodeDelete(int handle) {
 
     if(inodes[handle].double_indirect_block != 0)
     {
-      not_translation = 0;
+      
       dfs_block_size = DfsReadBlock(inodes[handle].double_indirect_block, &temp1);
-      not_translation = 1;
+      
       if(dfs_block_size == DFS_FAIL)
       {
         printf("DfsInodeDelete: Failed to read block\n");
@@ -993,9 +865,9 @@ int DfsInodeDelete(int handle) {
       {
         if(data_temp1[i] != 0)
         {
-          not_translation = 0;
+          
           dfs_block_size = DfsReadBlock(data_temp1[i], &temp2);
-          not_translation = 1;
+          
           
           if(dfs_block_size == DFS_FAIL)
           {
@@ -1166,30 +1038,6 @@ int DfsInodeWriteBytes(int handle, void *mem, int start_byte, int num_bytes) {
     i = first_block;
     last_block = end_byte / sb.fs_blocksize;
 
-    // for(i = 0; i <= first_block - 1; i++)
-    // {
-    //   //printf("DfsInodeWriteBytes: Allocating physical blocks for the preceeding blocks\n");
-    //   phy_block = DfsInodeTranslateVirtualToFilesys(handle, i);
-      
-    //   if(phy_block == DFS_FAIL)
-    //   {
-    //     phy_block = DfsInodeAllocateVirtualBlock(handle, i);
-
-    //     if(phy_block == DFS_FAIL)
-    //     {
-    //       printf("DfsInodeWriteBytes: Failed to allocate block\n");
-    //       return DFS_FAIL;
-    //     }
-
-    //     bzero(temp.data, sb.fs_blocksize);
-    //     //printf("DfsInodeWriteBytes: Resetting the allocated physical block %d\n", phy_block);
-    //     if(DfsWriteBlock(phy_block, &temp) == DFS_FAIL)
-    //     {
-    //       printf("DfsInodeWriteBytes: Failed to write to block\n");
-    //       return DFS_FAIL;
-    //     }
-    //   }
-    // }
     
     while(i <= last_block)
     {
@@ -1346,38 +1194,38 @@ int DfsInodeAllocateVirtualBlock(int handle, int virtual_blocknum) {
 
       bzero(temp1.data, sb.fs_blocksize);
 
-      not_translation = 0;
-      if(DfsWriteBlock(inodes[handle].indirect_block, &temp1) == DFS_FAIL)
+      
+      // if(DfsWriteBlock(inodes[handle].indirect_block, &temp1) == DFS_FAIL)
+      // {
+        
+      //   printf("DfsInodeAllocateVirtualBlock: Failed to write to block\n");
+      //   return DFS_FAIL;
+      // }
+      
+    } 
+    else
+    {
+      retval = DfsReadBlock(inodes[handle].indirect_block, &temp1);
+  
+      if(retval == DFS_FAIL)
       {
-        not_translation = 1;
-        printf("DfsInodeAllocateVirtualBlock: Failed to write to block\n");
+        printf("DfsInodeAllocateVirtualBlock: Failed to read block\n");
         return DFS_FAIL;
       }
-      not_translation = 1;
-    }
-
-    not_translation = 0;
-    retval = DfsReadBlock(inodes[handle].indirect_block, &temp1);
-    not_translation = 1;
-    
-    if(retval == DFS_FAIL)
-    {
-      printf("DfsInodeAllocateVirtualBlock: Failed to read block\n");
-      return DFS_FAIL;
     }
 
     data_temp1 = (uint32*)temp1.data;
     indirect_idx = virtual_blocknum - DFS_MAX_DIR_TABLE_SIZE;
     data_temp1[indirect_idx] = physical_block_num;
     
-    not_translation = 0;
+    
     if(DfsWriteBlock(inodes[handle].indirect_block, &temp1) == DFS_FAIL)
     {
       printf("DfsInodeAllocateVirtualBlock: Failed to write to block\n");
-      not_translation = 1;
+      
       return DFS_FAIL;
     }
-    not_translation = 1;
+    
   }
   else
   {
@@ -1393,24 +1241,25 @@ int DfsInodeAllocateVirtualBlock(int handle, int virtual_blocknum) {
 
       bzero(temp1.data, sb.fs_blocksize);
 
-      not_translation = 0;
-      if(DfsWriteBlock(inodes[handle].double_indirect_block, &temp1) == DFS_FAIL)
+      
+      // if(DfsWriteBlock(inodes[handle].double_indirect_block, &temp1) == DFS_FAIL)
+      // {
+      //   printf("DfsInodeAllocateVirtualBlock: Failed to write to block\n");
+        
+      //   return DFS_FAIL;
+      // }
+      
+    }
+    else
+    {
+      retval = DfsReadBlock(inodes[handle].double_indirect_block, &temp1);
+ 
+      if(retval == DFS_FAIL)
       {
-        printf("DfsInodeAllocateVirtualBlock: Failed to write to block\n");
-        not_translation = 1;
+        printf("DfsInodeAllocateVirtualBlock: Failed to read block\n");
         return DFS_FAIL;
       }
-      not_translation = 1;
-    }
 
-    not_translation = 0;
-    retval = DfsReadBlock(inodes[handle].double_indirect_block, &temp1);
-    not_translation = 1;
-    
-    if(retval == DFS_FAIL)
-    {
-      printf("DfsInodeAllocateVirtualBlock: Failed to read block\n");
-      return DFS_FAIL;
     }
 
     data_temp1 = (uint32*)temp1.data;
@@ -1429,28 +1278,27 @@ int DfsInodeAllocateVirtualBlock(int handle, int virtual_blocknum) {
       data_temp1[indirect_idx] = (uint32)check_num;
       bzero(temp2.data, sb.fs_blocksize);
       
-      not_translation = 0;
+      
       if(DfsWriteBlock(data_temp1[indirect_idx], &temp2) == DFS_FAIL)
       {
         printf("DfsInodeAllocateVirtualBlock: Failed to write to block\n");
-        not_translation = 1;
+        
         return DFS_FAIL;
       }
-      not_translation = 1;
+      
     }
-
-    not_translation = 0;
+    
     if(DfsWriteBlock(inodes[handle].double_indirect_block, &temp1) == DFS_FAIL)
     {
       printf("DfsInodeAllocateVirtualBlock: Failed to write to block\n");
-      not_translation = 1;
+      
       return DFS_FAIL;
     }
-    not_translation = 1;
+    
 
-    not_translation = 0;
+    
     retval = DfsReadBlock(data_temp1[indirect_idx], &temp2);
-    not_translation = 1;
+    
     if(retval == DFS_FAIL)
     {
       printf("DfsInodeAllocateVirtualBlock: Failed to read block\n");
@@ -1461,14 +1309,14 @@ int DfsInodeAllocateVirtualBlock(int handle, int virtual_blocknum) {
     double_indirect_idx = (virtual_blocknum - DFS_MAX_DIR_TABLE_SIZE - indirect_table_size) % indirect_table_size;
     data_temp2[double_indirect_idx] = physical_block_num;
 
-    not_translation = 0;
+    
     if(DfsWriteBlock(data_temp1[indirect_idx], &temp2) == DFS_FAIL)
     {
       printf("DfsInodeAllocateVirtualBlock: Failed to write to block\n");
-      not_translation = 1;
+      
       return DFS_FAIL;
     }
-    not_translation = 1;
+    
   }
 
   //printf("DfsInodeAllocateVirtualBlock: Allocated a physical block at %d\n", physical_block_num);
@@ -1523,9 +1371,9 @@ int DfsInodeTranslateVirtualToFilesys(int handle, int virtual_blocknum) {
   {
     if(inodes[handle].indirect_block != 0)
     {
-      not_translation = 0;
+      
       retval = DfsReadBlock(inodes[handle].indirect_block, &temp1);
-      not_translation = 1;
+      
     
       if(retval == DFS_FAIL)
       {
@@ -1554,9 +1402,9 @@ int DfsInodeTranslateVirtualToFilesys(int handle, int virtual_blocknum) {
   {
     if(inodes[handle].double_indirect_block != 0)
     {
-      not_translation = 0;
+      
       retval = DfsReadBlock(inodes[handle].double_indirect_block, &temp1);
-      not_translation = 1;
+      
     
       if(retval == DFS_FAIL)
       {
@@ -1568,9 +1416,9 @@ int DfsInodeTranslateVirtualToFilesys(int handle, int virtual_blocknum) {
 
       if(data_temp1[indirect_idx] != 0)
       {
-        not_translation = 0;
+        
         retval = DfsReadBlock(data_temp1[indirect_idx], &temp2);
-        not_translation = 1;
+        
 
         if(retval == DFS_FAIL)
         {
@@ -1678,6 +1526,7 @@ int DfsCacheAllocateSlot(int blocknum) {
       return DFS_FAIL;
     }
     cache[cache_line].dirty = 0;
+    latency += DFS_DISK_ACCESS_LATENCY;
   }
 
   if(LockHandleRelease(cache_lock) != SYNC_SUCCESS)

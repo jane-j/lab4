@@ -21,6 +21,7 @@ static int num_hits;
 static int num_total_accesses;
 static double avg_miss_latency;
 static uint32 age_global;
+static double latency;
 
 //////////////////////////////////////////////
 
@@ -70,6 +71,7 @@ void DfsModuleInit() {
   num_total_accesses = 0;
   avg_miss_latency = 0.0;
   age_global = 0;
+  latency = 0.0;
 
   AQueueInit(&cache_queue);
 
@@ -197,6 +199,7 @@ int DfsOpenFileSystem() {
   num_total_accesses = 0;
   avg_miss_latency = 0.0;
   age_global = 0;
+  latency = 0.0;
   last_last_blocknum_read = 0;
   last_blocknum_read = 0;
   last_blocknum_write = 0;
@@ -408,7 +411,7 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
   dfs_block * temp;
   int cache_handle_temp;
   int fbv_idx = blocknum / 32;
-  double latency, miss_time;
+  double miss_time;
 
   if(sb.valid == 0)
   {
@@ -426,6 +429,7 @@ int DfsReadBlock(int blocknum, dfs_block *b) {
   }
 
   age_global++;
+  latency = 0;
 
   cache_handle = DfsCacheHit(blocknum);  
   if(cache_handle != DFS_FAIL)
@@ -594,7 +598,7 @@ int DfsReadBlockUncached(int blocknum, dfs_block *b) {
 int DfsWriteBlock(int blocknum, dfs_block *b){
   int cache_handle;
   int total_bytes_written;
-  double latency, miss_time;
+  double miss_time;
   int miss_latency_int;
   double hit_rate, miss_rate;
   int i;
@@ -623,6 +627,7 @@ int DfsWriteBlock(int blocknum, dfs_block *b){
   }
 
   age_global++;
+  latency = 0;
 
   //Check in cache 
   cache_handle = DfsCacheHit(blocknum);
@@ -1175,30 +1180,6 @@ int DfsInodeWriteBytes(int handle, void *mem, int start_byte, int num_bytes) {
     i = first_block;
     last_block = end_byte / sb.fs_blocksize;
 
-    // for(i = 0; i <= first_block - 1; i++)
-    // {
-    //   //printf("DfsInodeWriteBytes: Allocating physical blocks for the preceeding blocks\n");
-    //   phy_block = DfsInodeTranslateVirtualToFilesys(handle, i);
-      
-    //   if(phy_block == DFS_FAIL)
-    //   {
-    //     phy_block = DfsInodeAllocateVirtualBlock(handle, i);
-
-    //     if(phy_block == DFS_FAIL)
-    //     {
-    //       printf("DfsInodeWriteBytes: Failed to allocate block\n");
-    //       return DFS_FAIL;
-    //     }
-
-    //     bzero(temp.data, sb.fs_blocksize);
-    //     //printf("DfsInodeWriteBytes: Resetting the allocated physical block %d\n", phy_block);
-    //     if(DfsWriteBlock(phy_block, &temp) == DFS_FAIL)
-    //     {
-    //       printf("DfsInodeWriteBytes: Failed to write to block\n");
-    //       return DFS_FAIL;
-    //     }
-    //   }
-    // }
     
     while(i <= last_block)
     {
@@ -1358,19 +1339,22 @@ int DfsInodeAllocateVirtualBlock(int handle, int virtual_blocknum) {
 
       bzero(temp1.data, sb.fs_blocksize);
 
-      if(DfsWriteBlock(inodes[handle].indirect_block, &temp1) == DFS_FAIL)
+      // if(DfsWriteBlock(inodes[handle].indirect_block, &temp1) == DFS_FAIL)
+      // {
+      //   printf("DfsInodeAllocateVirtualBlock: Failed to write to block\n");
+      //   return DFS_FAIL;
+      // }
+    }
+    else 
+    {
+
+      retval = DfsReadBlock(inodes[handle].indirect_block, &temp1);
+      
+      if(retval == DFS_FAIL)
       {
-        printf("DfsInodeAllocateVirtualBlock: Failed to write to block\n");
+        printf("DfsInodeAllocateVirtualBlock: Failed to read block\n");
         return DFS_FAIL;
       }
-    }
-
-    retval = DfsReadBlock(inodes[handle].indirect_block, &temp1);
-    
-    if(retval == DFS_FAIL)
-    {
-      printf("DfsInodeAllocateVirtualBlock: Failed to read block\n");
-      return DFS_FAIL;
     }
 
     data_temp1 = (uint32*)temp1.data;
@@ -1397,19 +1381,22 @@ int DfsInodeAllocateVirtualBlock(int handle, int virtual_blocknum) {
 
       bzero(temp1.data, sb.fs_blocksize);
 
-      if(DfsWriteBlock(inodes[handle].double_indirect_block, &temp1) == DFS_FAIL)
+      // if(DfsWriteBlock(inodes[handle].double_indirect_block, &temp1) == DFS_FAIL)
+      // {
+      //   printf("DfsInodeAllocateVirtualBlock: Failed to write to block\n");
+      //   return DFS_FAIL;
+      // }
+    }
+    else
+    {
+
+      retval = DfsReadBlock(inodes[handle].double_indirect_block, &temp1);
+      
+      if(retval == DFS_FAIL)
       {
-        printf("DfsInodeAllocateVirtualBlock: Failed to write to block\n");
+        printf("DfsInodeAllocateVirtualBlock: Failed to read block\n");
         return DFS_FAIL;
       }
-    }
-
-    retval = DfsReadBlock(inodes[handle].double_indirect_block, &temp1);
-    
-    if(retval == DFS_FAIL)
-    {
-      printf("DfsInodeAllocateVirtualBlock: Failed to read block\n");
-      return DFS_FAIL;
     }
 
     data_temp1 = (uint32*)temp1.data;
@@ -1664,6 +1651,7 @@ int DfsCacheAllocateSlot(int blocknum) {
       return DFS_FAIL;
     }
     cache[cache_line].dirty = 0;
+    latency += DFS_DISK_ACCESS_LATENCY;
   }
 
   if(LockHandleRelease(cache_lock) != SYNC_SUCCESS)

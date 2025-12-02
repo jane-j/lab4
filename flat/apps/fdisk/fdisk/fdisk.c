@@ -50,7 +50,7 @@ void main (int argc, char *argv[])
   sb.start_block_fbv = FDISK_FBV_BLOCK_START;
   sb.start_block_data = DFS_FBV_BLOCK_END + 1;
 
-  Printf("start block data %d\n", sb.start_block_data);
+  //Printf("start block data %d\n", sb.start_block_data);
 
   disksize = disk_size();
   diskblocksize = disk_blocksize();
@@ -98,7 +98,7 @@ void main (int argc, char *argv[])
 
   bzero(temp_block.data, DFS_BLOCKSIZE);
 
-  Printf("sizeof inode %d\n ", sizeof(dfs_inode));
+  //Printf("sizeof inode %d\n ", sizeof(dfs_inode));
 
   //Writing to boot record block
   if(FdiskWriteBlock(FDISK_BOOT_FILESYSTEM_BLOCKNUM, &temp_block) == DFS_FAIL) {

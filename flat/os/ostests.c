@@ -24,7 +24,6 @@ void RunOSTests() {
     TestFunc();
     TestUnaligned();
     TestLargeFile();
-    
     TestDeleteAndReopen();
     // Run Twice to check persistence
     TestPersistence();
@@ -194,88 +193,6 @@ void TestUnaligned() {
     
     printf("===== Unaligned Write Test PASSED =====\n\n");
 }
-
-
-// void TestSparse() {
-//     uint32 inode_handle;
-//     int idx;
-//     int write_result, read_result;
-//     int current_size;
-//     int expected_value;
-//     int block_num;
-//     int file_offset;
-    
-//     printf("===== Starting Sparse File Test =====\n");
-    
-//     inode_handle = DfsInodeOpen("ece695-hole");
-//     if (inode_handle == DFS_FAIL) {
-//         HandleTestFailure("DfsInodeOpen failed for sparse test");
-//     }
-    
-//     // Prepare test data
-//     InitializePattern(extended_buffer_1, NUMBYTES_2);
-    
-//     // Write 300 bytes starting at offset 1700 (creating a hole)
-//     write_result = DfsInodeWriteBytes(inode_handle, extended_buffer_1 + 1700, 1700, 300);
-//     printf("Write 1: %d bytes at offset 1700 (creates hole)\n", write_result);
-//     ValidateWriteResult(write_result, 300, "sparse write #1");
-    
-//     // Verify file size includes the hole
-//     current_size = DfsInodeFilesize(inode_handle);
-//     printf("File size after sparse write: %d\n", current_size);
-//     if (current_size != 2000) {
-//         printf("Expected file size 2000, got %d\n", current_size);
-//         HandleTestFailure("Sparse file size check failed");
-//     }
-    
-//     // Read entire file including hole
-//     read_result = DfsInodeReadBytes(inode_handle, extended_buffer_2, 0, 2000);
-//     printf("Read %d bytes from offset 0\n", read_result);
-//     ValidateReadResult(read_result, 2000, "sparse read");
-    
-//     // Verify: bytes 0-1699 should be 0, bytes 1700-1999 should match pattern
-//     for (idx = 0; idx < 2000; idx++) {
-//         expected_value = (idx >= 1700) ? extended_buffer_1[idx] : 0;
-//         if (expected_value != extended_buffer_2[idx]) {
-//             printf("Mismatch at byte %d: expected=%d, actual=%d\n", 
-//                    idx, expected_value, extended_buffer_2[idx]);
-//             HandleTestFailure("Sparse file data verification failed");
-//         }
-//     }
-    
-//     // Write additional blocks to test larger sparse file
-//     printf("Writing blocks 249-500 to test extensive sparse file\n");
-//     InitializePattern(primary_buffer, NUMBYTES);
-    
-//     for (block_num = 249; block_num <= 500; block_num++) {
-//         file_offset = block_num * NUMBYTES;
-//         write_result = DfsInodeWriteBytes(inode_handle, primary_buffer, file_offset, NUMBYTES);
-        
-//         if (write_result != NUMBYTES) {
-//             printf("Write failed at block %d, offset %d\n", block_num, file_offset);
-//             HandleTestFailure("Sparse file block write failed");
-//         }
-//     }
-    
-//     // Verify all written blocks
-//     printf("Verifying blocks 249-500\n");
-//     for (block_num = 249; block_num <= 500; block_num++) {
-//         file_offset = block_num * NUMBYTES;
-//         read_result = DfsInodeReadBytes(inode_handle, secondary_buffer, file_offset, NUMBYTES);
-        
-//         if (read_result != NUMBYTES) {
-//             printf("Read failed at block %d\n", block_num);
-//             HandleTestFailure("Sparse file block read failed");
-//         }
-        
-//         if (!VerifyPattern(primary_buffer, secondary_buffer, NUMBYTES)) {
-//             printf("Verification failed at block %d\n", block_num);
-//             HandleTestFailure("Sparse file block data mismatch");
-//         }
-//     }
-    
-//     printf("===== Sparse File Test PASSED =====\n\n");
-// }
 
 // Large write test
 void TestLargeFile() {

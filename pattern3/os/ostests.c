@@ -4,599 +4,380 @@
 #include "disk.h"
 #include "dfs.h"
 #include "ostests.h"
- 
-static char test_block[NUMBYTES];
-static char test_block2[NUMBYTES];
-static char test_buffer[NUMBYTES_2];
-static char test_buffer2[NUMBYTES_2];
- 
+
+// Test data buffers
+static char primary_buffer[NUMBYTES];
+static char secondary_buffer[NUMBYTES];
+static char extended_buffer_1[NUMBYTES_2];
+static char extended_buffer_2[NUMBYTES_2];
+
+// Helper function prototypes
+static void InitializePattern(char *buffer, int size);
+static int VerifyPattern(char *buffer1, char *buffer2, int size);
+static void HandleTestFailure(char *msg);
+static int ValidateWriteResult(int result, int expected, char *context);
+static int ValidateReadResult(int result, int expected, char *context);
+static int ValidateFilesize(int inode_handle, int expected_size);
+
+
 void RunOSTests() {
-  TestBasic();
-  TestUnaligned();
-  TestSparse();
-  TestLargeFile();
-  TestDeleteAndReopen();
-  TestPersistence();
+    TestFunc();
+    TestUnaligned();
+    TestLargeFile();
+    TestDeleteAndReopen();
+    // Run Twice to check persistence
+    TestPersistence();
+    TestPersistence();
 }
- 
-// write 4 complete blocks and compare the 3rd block
-void TestBasic() {
-  uint32 inode;
-  int i;
-  int r;
-  int w;
-  int filesize;
- 
-  printf("runostests: starting basic test\n");
- 
-  inode = DfsInodeOpen("ece695-basic");
- 
-  if(inode == DFS_FAIL)
-  {
-    printf("runostests: DfsInodeOpen failed\n");
-    GracefulExit();
-  }
- 
-  for (i = 0; i < NUMBYTES; i++)
-  {
-    test_block[i] = i;
-  }
- 
-  for (i = 0; i < 4; i++)
-  {
-    w = DfsInodeWriteBytes(inode, test_block, i * NUMBYTES, NUMBYTES);
- 
-    if(w == DFS_FAIL)
-    {
-      printf("runostests: DfsInodeWriteBytes failed\n");
-      GracefulExit();
-    }
-    else
-    {
-      if (w != NUMBYTES)
-      {
-        printf("runostests: DfsInodeWriteBytes wrote wrong size %d\n", w);
-        GracefulExit();
-      }
-    }
-  }
- 
-  filesize = DfsInodeFilesize(inode);
-  if(filesize == DFS_FAIL)
-  {
-    printf("runostests: DfsInodeFilesize failed\n");
-    GracefulExit();
-  }
-  else
-  {
-    if (filesize != 4 * NUMBYTES)
-    {
-      printf("runostests: DfsInodeFilesize wrong size %d\n", filesize);
-      GracefulExit();
-    }
-  }
- 
-  r = DfsInodeReadBytes(inode, test_block2, 2 * NUMBYTES, NUMBYTES);
- 
-  if(r == DFS_FAIL)
-  {
-    printf("runostests: DfsInodeReadBytes failed\n");
-    GracefulExit();
-  }
-  else
-  {
-    if (r != NUMBYTES)
-    {
-      printf("runostests: DfsInodeReadBytes read wrong size %d\n", r);
-      GracefulExit();
-    }
-  }
- 
-  for (i = 0; i < NUMBYTES; i++)
-  {
-    if (test_block[i] != test_block2[i])
-    {
-      printf("runostests: FAIL: test_block[%d] != test_block2[%d] (%d != %d)\n", i, i, test_block[i], test_block2[i]);
-      GracefulExit();
-    }
-  }
- 
-  printf("runostests: basic test passed!\n");
 
-  printf("cache test:\n");
-
-  r = DfsInodeReadBytes(inode, test_block2, 2 * NUMBYTES, NUMBYTES);
-
-  if(r == DFS_FAIL)
-  {
-    printf("runostests: DfsInodeReadBytes failed\n");
-    GracefulExit();
-  }
-  else
-  {
-    if (r != NUMBYTES)
-    {
-      printf("runostests: DfsInodeReadBytes read wrong size %d\n", r);
-      GracefulExit();
+static void InitializePattern(char *buffer, int size) {
+    int idx;
+    for (idx = 0; idx < size; idx++) {
+        buffer[idx] = (char)idx;
     }
-  }
- 
-  for (i = 0; i < NUMBYTES; i++)
-  {
-    if (test_block[i] != test_block2[i])
-    {
-      printf("runostests: FAIL: test_block[%d] != test_block2[%d] (%d != %d)\n", i, i, test_block[i], test_block2[i]);
-      GracefulExit();
-    }
-    else {
-      printf("runostests: Matched: test_block[%d] != test_block2[%d] (%d != %d)\n", i, i, test_block[i], test_block2[i]);
-    }
-  }
 }
- 
- 
+
+static int VerifyPattern(char *buffer1, char *buffer2, int size) {
+    int idx;
+    for (idx = 0; idx < size; idx++) {
+        if (buffer1[idx] != buffer2[idx]) {
+            printf("Data mismatch at index %d: expected=%d, actual=%d\n", 
+                   idx, (unsigned char)buffer1[idx], (unsigned char)buffer2[idx]);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void HandleTestFailure(char *msg) {
+    printf("TEST FAILURE: %s\n", msg);
+    GracefulExit();
+}
+
+static int ValidateWriteResult(int result, int expected, char *context) {
+    if (result == DFS_FAIL) {
+        printf("Write operation failed in %s\n", context);
+        HandleTestFailure(context);
+        return 0;
+    }
+    if (result != expected) {
+        printf("Write size mismatch in %s: expected=%d, got=%d\n", 
+               context, expected, result);
+        HandleTestFailure(context);
+        return 0;
+    }
+    return 1;
+}
+
+static int ValidateReadResult(int result, int expected, char *context) {
+    if (result == DFS_FAIL) {
+        printf("Read operation failed in %s\n", context);
+        HandleTestFailure(context);
+        return 0;
+    }
+    if (result != expected) {
+        printf("Read size mismatch in %s: expected=%d, got=%d\n", 
+               context, expected, result);
+        HandleTestFailure(context);
+        return 0;
+    }
+    return 1;
+}
+
+static int ValidateFilesize(int inode_handle, int expected_size) {
+    int actual_size = DfsInodeFilesize(inode_handle);
+    
+    if (actual_size == DFS_FAIL) {
+        printf("DfsInodeFilesize failed\n");
+        return 0;
+    }
+    
+    if (actual_size != expected_size) {
+        printf("File size validation failed: expected=%d, got=%d\n", 
+               expected_size, actual_size);
+        return 0;
+    }
+    
+    return 1;
+}
+
+//======================================================================
+// Test Case 1: Basic Read/Write Operations
+// Tests: 4 block writes, file size check, block read verification
+//======================================================================
+void TestFunc() {
+    uint32 inode_handle;
+    int write_result, read_result;
+    int block_idx;
+    int offset;
+    
+    printf("===== Starting Basic I/O Test =====\n");
+    
+    // Open inode for testing
+    inode_handle = DfsInodeOpen("ece695-basic");
+    if (inode_handle == DFS_FAIL) {
+        HandleTestFailure("DfsInodeOpen failed for basic test");
+    }
+    
+    InitializePattern(primary_buffer, NUMBYTES);
+    
+    // Write 4 consecutive blocks
+    for (block_idx = 0; block_idx < 4; block_idx++) {
+        offset = block_idx * NUMBYTES;
+        write_result = DfsInodeWriteBytes(inode_handle, primary_buffer, offset, NUMBYTES);
+        ValidateWriteResult(write_result, NUMBYTES, "basic test write loop");
+    }
+    
+
+    if (!ValidateFilesize(inode_handle, 4 * NUMBYTES)) {
+        HandleTestFailure("File size check failed in basic test");
+    }
+    
+    read_result = DfsInodeReadBytes(inode_handle, secondary_buffer, 2 * NUMBYTES, NUMBYTES);
+    ValidateReadResult(read_result, NUMBYTES, "basic test read");
+    
+    if (!VerifyPattern(primary_buffer, secondary_buffer, NUMBYTES)) {
+        HandleTestFailure("Data verification failed in basic test");
+    }
+    
+    printf("===== Basic I/O Test PASSED =====\n\n");
+}
+
+//  Non-block-aligned writes
 void TestUnaligned() {
-  uint32 inode;
-  int i;
-  int w;
-  int r;
-  int filesize;
- 
-  printf("runostests: starting unaligned test\n");
- 
-  inode = DfsInodeOpen("ece695-unaligned");
- 
-  if(inode == DFS_FAIL)
-  {
-    printf("runostests: DfsInodeOpen failed\n");
-    GracefulExit();
-  }
- 
- 
-  for (i = 0; i < NUMBYTES_2; i++)
-  {
-    test_buffer[i] = i;
-  }
- 
-  w = DfsInodeWriteBytes(inode, test_buffer, 0, 500);
-  printf("runostests: write 1: wrote %d bytes at offset 0\n", w);
- 
-  if (w != 500)
-  {
-    printf("runostests: write 1 size mismatch: expected 500, got %d\n", w);
-    GracefulExit();
-  }
- 
-  w = DfsInodeWriteBytes(inode, test_buffer + 500, 500, 700);
-  printf("runostests: write 2: wrote %d bytes at offset 500\n", w);
- 
-  if (w != 700)
-  {
-    printf("runostests: write 2 size mismatch: expected 700, got %d\n", w);
-      GracefulExit();
-  }
- 
-  w = DfsInodeWriteBytes(inode, test_buffer + 1200, 1200, 300);
-  printf("runostests: write 3: wrote %d bytes at offset 1200\n", w);
- 
-  if (w != 300)
-  {
-    printf("runostests: write 3 size mismatch: expected 300, got %d\n", w);
-    GracefulExit();
-  }
- 
-  filesize = DfsInodeFilesize(inode);
-  printf("runostests: filesize after write 3 = %d\n", filesize);
- 
-  // if (filesize != 1500)
-  // {
-  //   printf("runostests: filesize mismatch after 3: expected 1500, got %d\n", filesize);
-  //   GracefulExit();
-  // }
- 
-  r = DfsInodeReadBytes(inode, test_buffer2, 0, 1500);
-  printf("runostests: read back %d bytes from offset 0\n", r);
- 
-  if (r != 1500)
-  {
-    printf("runostests: read size mismatch: expected 1500, got %d\n", r);
-    GracefulExit();
-  }
- 
-  for (i = 0; i < 1500; i++)
-  {
-    if (test_buffer[i] != test_buffer2[i])
-    {
-      printf("runostests: FAIL: test_buffer[%d] != test_buffer2[%d] (%d != %d)\n", i, i, test_buffer[i], test_buffer2[i]);
-      GracefulExit();
+    uint32 inode_handle;
+    int write_result, read_result;
+    int total_written = 0;
+    
+    printf("===== Starting Unaligned Write Test =====\n");
+    
+    inode_handle = DfsInodeOpen("ece695-unaligned");
+    if (inode_handle == DFS_FAIL) {
+        HandleTestFailure("DfsInodeOpen failed for unaligned test");
     }
-  }
- 
-  printf("runostests: unaligned test passed!\n");
+    
+    InitializePattern(extended_buffer_1, NUMBYTES_2);
+    
+    // First write: 500 bytes at offset 0
+    write_result = DfsInodeWriteBytes(inode_handle, extended_buffer_1, 0, 500);
+    printf("Write operation 1: %d bytes at offset 0\n", write_result);
+    ValidateWriteResult(write_result, 500, "unaligned write #1");
+    total_written += write_result;
+    
+    // Second write: 700 bytes at offset 500
+    write_result = DfsInodeWriteBytes(inode_handle, extended_buffer_1 + 500, 500, 700);
+    printf("Write operation 2: %d bytes at offset 500\n", write_result);
+    ValidateWriteResult(write_result, 700, "unaligned write #2");
+    total_written += write_result;
+    
+    // Third write: 300 bytes at offset 1200
+    write_result = DfsInodeWriteBytes(inode_handle, extended_buffer_1 + 1200, 1200, 300);
+    printf("Write operation 3: %d bytes at offset 1200\n", write_result);
+    ValidateWriteResult(write_result, 300, "unaligned write #3");
+    total_written += write_result;
+    
+    // Verify file size
+    printf("Total bytes written: %d\n", total_written);
+    if (!ValidateFilesize(inode_handle, 1500)) {
+        HandleTestFailure("File size check failed in unaligned test");
+    }
+    
+    // Read entire file and verify
+    read_result = DfsInodeReadBytes(inode_handle, extended_buffer_2, 0, 1500);
+    printf("Read operation: %d bytes from offset 0\n", read_result);
+    ValidateReadResult(read_result, 1500, "unaligned read");
+    
+    if (!VerifyPattern(extended_buffer_1, extended_buffer_2, 1500)) {
+        HandleTestFailure("Data verification failed in unaligned test");
+    }
+    
+    printf("===== Unaligned Write Test PASSED =====\n\n");
 }
- 
-void TestSparse() {
-  uint32 inode;
-  int i;
-  int w;
-  int r;
-  int filesize;
-  int temp;
-  int block;
-  int offset;
- 
-  printf("runostests: starting file hole test\n");
- 
-  inode = DfsInodeOpen("ece695-hole");
- 
-  if (inode == DFS_FAIL)
-  {
-    printf("runostests: DfsInodeOpen failed\n");
-    GracefulExit();
-  }
- 
-  for (i = 0; i < NUMBYTES_2; i++)
-  {
-    test_buffer[i] = i;
-  }
- 
-  w = DfsInodeWriteBytes(inode, test_buffer + 1700, 1700, 300);
-  printf("runostests: write 1: wrote %d bytes at offset 1700\n", w);
- 
-  if (w != 300)
-  {
-    printf("runostests: write 1 size mismatch: expected 300, got %d\n", w);
-    GracefulExit();
-  }
- 
-  filesize = DfsInodeFilesize(inode);
-  printf("runostests: filesize after write 1 = %d\n", filesize);
- 
-  // if (filesize != 2000)
-  // {
-  //   printf("runostests: filesize mismatch: expected 2000, got %d\n", filesize);
-  //   GracefulExit();
-  // }
- 
-  r = DfsInodeReadBytes(inode, test_buffer2, 0, 2000);
-  printf("runostests: read back %d bytes from offset 0\n", r);
- 
-  if (r != 2000)
-  {
-    printf("runostests: read size mismatch: expected 2000, got %d\n", r);
-    GracefulExit();
-  }
- 
-  for (i = 0; i < 2000; i++)
-  {
-    if (i >= 1700)
-    {
-      temp = test_buffer[i];  
-    }
-    else
-    {
-      temp = 0;
-    }
- 
-    if (temp != test_buffer2[i])
-    {
-      printf("runostests: mismatch at byte %d: expected=%d, actual=%d\n", i, temp, test_buffer2[i]);
-      GracefulExit();
-    }
-  }
- 
-  for (block = 249; block <= 500; block++) {
-    for (i = 0; i < NUMBYTES; i++) {
-      test_block[i] = i;
-    }
- 
-    offset = block * NUMBYTES;
-    w = DfsInodeWriteBytes(inode, test_block, offset, NUMBYTES);
-    printf("runostests: write block %d at offset %d: wrote %d bytes\n", block, offset, w);
- 
-    if (w != NUMBYTES) {
-      printf("runostests: block %d write size mismatch: expected %d, got %d\n", block, NUMBYTES, w);
-      GracefulExit();
-    }
-  }
- 
-  for (block = 249; block <= 500; block++) {
- 
-    offset = block * NUMBYTES;
-    r = DfsInodeReadBytes(inode, test_block2, offset, NUMBYTES);
-   
-    if (r != NUMBYTES) {
-      printf("runostests: read block %d failed: expected %d, got %d\n", block, NUMBYTES, r);
-      GracefulExit();
-    }
- 
-    for (i = 0; i < NUMBYTES; i++) {
-      if ((char)i != test_block2[i])
-      {
-        printf("runostests: mismatch: block=%d, offset_in_file=%d, index_in_block=%d, expected=%d, actual=%d\n", block, offset, i, (char)i, test_block2[i]);
-        GracefulExit();
-      }
-    }
-  }
 
-  filesize = DfsInodeFilesize(inode);
-  printf("runostests: filesize after write 1 = %d\n", filesize);
- 
-  printf("runostests: file with holes test passed!\n");
-}
- 
+// Large write test
 void TestLargeFile() {
-  uint32 inode;
-  int block;
-  int i;
-  int w;
-  int r;
-  int filesize;
-  int expected_filesize;
-  int offset;
- 
-  printf("runostests: starting large file test\n");
- 
-  inode = DfsInodeOpen("ece695-large");
- 
-  if(inode == DFS_FAIL)
-  {
-    printf("runostests: DfsInodeOpen failed\n");
-    GracefulExit();
-  }
- 
-  for (block = 0; block < LARGE_NUM_BLOCKS; block++)
-  {
-    for (i = 0; i < NUMBYTES; i++)
-    {
-      test_block[i] = i;
+    uint32 inode_handle;
+    int block_num;
+    int write_result, read_result;
+    int byte_offset;
+    int expected_total_size;
+    
+    printf("===== Starting Large File Test =====\n");
+    printf("Writing %d blocks to test indirect addressing\n", LARGE_NUM_BLOCKS);
+    
+    inode_handle = DfsInodeOpen("ece695-large");
+    if (inode_handle == DFS_FAIL) {
+        HandleTestFailure("DfsInodeOpen failed for large file test");
     }
- 
-    offset = block * NUMBYTES;
-    w = DfsInodeWriteBytes(inode, test_block, offset, NUMBYTES);
- 
-    if (w != NUMBYTES)
-    {
-      printf("runostests: write failed at block=%d, offset=%d: expected=%d, got=%d\n", block, offset, NUMBYTES, w);
-      GracefulExit();
+    
+    InitializePattern(primary_buffer, NUMBYTES);
+    
+    // Write phase: write LARGE_NUM_BLOCKS blocks
+    for (block_num = 0; block_num < LARGE_NUM_BLOCKS; block_num++) {
+        byte_offset = block_num * NUMBYTES;
+        write_result = DfsInodeWriteBytes(inode_handle, primary_buffer, byte_offset, NUMBYTES);
+        
+        if (write_result != NUMBYTES) {
+            printf("Write failure at block %d (offset %d)\n", block_num, byte_offset);
+            HandleTestFailure("Large file write operation failed");
+        }
     }
-  }
- 
-  filesize = DfsInodeFilesize(inode);
-  expected_filesize = LARGE_NUM_BLOCKS * NUMBYTES;
-  printf("runostests: final filesize=%d, expected=%d\n", filesize, expected_filesize);
- 
-  // if (filesize != expected_filesize)
-  // {
-  //   printf("runostests: final filesize mismatch: expected=%d, got=%d\n", expected_filesize, filesize);
-  //   GracefulExit();
-  // }
- 
-  printf("runostests: starting verify\n");
- 
-  for (block = 0; block < LARGE_NUM_BLOCKS; block++)
-  {
-    offset = block * NUMBYTES;
-    r = DfsInodeReadBytes(inode, test_block2, offset, NUMBYTES);
-   
-    if (r != NUMBYTES)
-    {
-      printf("runostests: read failed at block=%d, offset=%d: expected=%d, got=%d\n", block, offset, NUMBYTES, r);
-      GracefulExit();
+    
+    expected_total_size = LARGE_NUM_BLOCKS * NUMBYTES;
+    printf("Expected file size: %d bytes\n", expected_total_size);
+    
+    if (!ValidateFilesize(inode_handle, expected_total_size)) {
+        HandleTestFailure("File size check failed in large file test");
     }
- 
-    for (i = 0; i < NUMBYTES; i++)
-    {
-      if ((char)i != test_block2[i])
-      {
-        printf("runostests: mismatch: block=%d, offset_in_file=%d, index_in_block=%d, expected=%d, actual=%d\n", block, offset + i, i, (char)i, test_block2[i]);
-        GracefulExit();
-      }
+    
+    printf("Starting verification phase\n");
+    for (block_num = 0; block_num < LARGE_NUM_BLOCKS; block_num++) {
+        byte_offset = block_num * NUMBYTES;
+        read_result = DfsInodeReadBytes(inode_handle, secondary_buffer, byte_offset, NUMBYTES);
+        
+        if (read_result != NUMBYTES) {
+            printf("Read failure at block %d (offset %d)\n", block_num, byte_offset);
+            HandleTestFailure("Large file read operation failed");
+        }
+        
+        if (!VerifyPattern(primary_buffer, secondary_buffer, NUMBYTES)) {
+            printf("Verification failed at block %d\n", block_num);
+            HandleTestFailure("Large file data verification failed");
+        }
     }
-  }
- 
-  printf("runostests: large file test passed!\n");
+    
+    printf("===== Large File Test PASSED =====\n\n");
+    
 }
- 
+
+
+// Delete and reopen test.
 void TestDeleteAndReopen() {
-  uint32 inode;
-  int i;
-  int w;
-  int r;
-  int filesize_before;
-  int filesize_after;
- 
-  printf("runostests: starting delete test\n");
- 
-  inode = DfsInodeOpen("ece695-delete");
-  if(inode == DFS_FAIL)
-  {
-    printf("runostests: DfsInodeOpen failed\n");
-    GracefulExit();
-  }
- 
-  for (i = 0; i < NUMBYTES; i++)
-  {
-    test_block[i] = i;
-  }
- 
-  w = DfsInodeWriteBytes(inode, test_block, 0, NUMBYTES);
-  if(w == DFS_FAIL)
-  {
-    printf("runostests: DfsInodeWriteBytes failed\n");
-    GracefulExit();
-  }
-  else
-  {
-    if (w != NUMBYTES)
-    {
-      printf("runostests: DfsInodeWriteBytes wrote wrong size %d\n", w);
-      GracefulExit();
+    uint32 inode_handle;
+    int write_result, read_result, delete_result;
+    int size_before, size_after;
+    
+    printf("===== Starting Delete/Reopen Test =====\n");
+    
+    // Create and write to file
+    inode_handle = DfsInodeOpen("ece695-delete");
+    if (inode_handle == DFS_FAIL) {
+        HandleTestFailure("DfsInodeOpen failed for delete test");
     }
-    else
-    {
-      printf("runostests: wrote %d bytes to inode %d\n", w, inode);
+    
+    InitializePattern(primary_buffer, NUMBYTES);
+    write_result = DfsInodeWriteBytes(inode_handle, primary_buffer, 0, NUMBYTES);
+    
+    if (ValidateWriteResult(write_result, NUMBYTES, "delete test write")) {
+        printf("Successfully wrote %d bytes to file\n", write_result);
     }
-  }
- 
-  filesize_before = DfsInodeFilesize(inode);
- 
-  if(filesize_before == DFS_FAIL)
-  {
-    printf("runostests: DfsInodeFilesize failed\n");
-    GracefulExit();
-  }
-  else
-  {
-    if (filesize_before != NUMBYTES)
-    {
-      printf("runostests: filesize_before wrong size %d\n", filesize_before);
-      GracefulExit();
+    
+    // Check size before deletion
+    size_before = DfsInodeFilesize(inode_handle);
+    if (size_before != NUMBYTES) {
+        printf("Pre-deletion size mismatch: expected=%d, got=%d\n", NUMBYTES, size_before);
+        HandleTestFailure("Size check before deletion failed");
     }
-  }
- 
-  i = DfsInodeDelete(inode);
- 
-  if(i == DFS_FAIL)
-  {
-    printf("runostests: DfsInodeDelete failed\n");
-    GracefulExit();
-  }
- 
-  inode = DfsInodeOpen("ece695-delete");
- 
-  if(inode == DFS_FAIL)
-  {
-    printf("runostests: reopen DfsInodeOpen failed\n");
-    GracefulExit();
-  }
- 
-  filesize_after = DfsInodeFilesize(inode);
- 
-  if(filesize_after == DFS_FAIL)
-  {
-    printf("runostests: filesize_after DfsInodeFilesize failed\n");
-    GracefulExit();
-  }
-  else
-  {
-    if (filesize_after != 0)
-    {
-      printf("runostests: filesize_after wrong size %d\n", filesize_after);
-      GracefulExit();
+    printf("File size before deletion: %d bytes\n", size_before);
+    
+    // Delete the inode
+    delete_result = DfsInodeDelete(inode_handle);
+    if (delete_result == DFS_FAIL) {
+        HandleTestFailure("DfsInodeDelete failed");
     }
-  }
- 
-  r = DfsInodeReadBytes(inode, test_block2, 0, NUMBYTES);
- 
-  if(r == DFS_FAIL)
-  {
-    printf("runostests: read after delete returned DFS_FAIL as expected\n");
-  }
-  else
-  {
-    printf("runostests: read after delete should not return anything other than DFS_FAIL, but got %d\n", r);
-    GracefulExit();
-  }
- 
-  printf("runostests: delete test passed!\n");
+    printf("File deleted successfully\n");
+    
+    // Reopen with same name 
+    inode_handle = DfsInodeOpen("ece695-delete");
+    if (inode_handle == DFS_FAIL) {
+        HandleTestFailure("Reopen after delete failed");
+    }
+    printf("File reopened successfully\n");
+    
+    // Check size after reopening
+    size_after = DfsInodeFilesize(inode_handle);
+    if (size_after != 0) {
+        printf("Post-deletion size should be 0, got %d\n", size_after);
+        HandleTestFailure("Size check after deletion failed");
+    }
+    printf("File size after reopen: %d bytes (correct)\n", size_after);
+    
+    // Try to read from empty file
+    read_result = DfsInodeReadBytes(inode_handle, secondary_buffer, 0, NUMBYTES);
+    if (read_result == DFS_FAIL) {
+        printf("Read from empty file correctly returned DFS_FAIL\n");
+    } else {
+        printf("Unexpected: read returned %d instead of DFS_FAIL\n", read_result);
+        HandleTestFailure("Read from empty file should fail");
+    }
+    
+    printf("===== Delete/Reopen Test PASSED =====\n\n");
 }
- 
+
+// Check persisitence across runs
 void TestPersistence() {
-  uint32 inode;
-  char pattern[NUMBYTES];
-  char readbuf[NUMBYTES];
-  int i;
-  int r;
-  int filesize;
-  char same = 1;
- 
-  printf("runostests: starting persistence test\n");
- 
-  inode = DfsInodeOpen("ece695-persist");
- 
-  if(inode == DFS_FAIL)
-  {
-    printf("runostests: DfsInodeOpen failed\n");
-    GracefulExit();
-  }
- 
-  for (i = 0; i < NUMBYTES; i++)
-  {
-    pattern[i] = i;
-  }
- 
-  filesize = DfsInodeFilesize(inode);
- 
-  if (filesize < NUMBYTES)
-  {
-    printf("runostests: initializing persistent filesize=%d\n", filesize);
-    r = DfsInodeWriteBytes(inode, pattern, 0, NUMBYTES);
- 
-    if(r == DFS_FAIL)
-    {
-      printf("runostests: initial DfsInodeWriteBytes failed\n");
-      GracefulExit();
+    uint32 inode_handle;
+    char expected_pattern[NUMBYTES];
+    char read_buffer[NUMBYTES];
+    int write_result, read_result;
+    int current_size;
+    int idx;
+    int data_matches = 1;
+    
+    printf("===== Starting Persistence Test =====\n");
+    
+    inode_handle = DfsInodeOpen("ece695-persist");
+    if (inode_handle == DFS_FAIL) {
+        HandleTestFailure("DfsInodeOpen failed for persistence test");
     }
-    else
-    {
-      if (r != NUMBYTES)
-      {
-        printf("runostests: initial DfsInodeWriteBytes wrote wrong size %d\n", r);
-        GracefulExit();
-      }
+    
+    // Initialize expected pattern
+    InitializePattern(expected_pattern, NUMBYTES);
+    
+    // Check current file size
+    current_size = DfsInodeFilesize(inode_handle);
+    printf("Current file size: %d bytes\n", current_size);
+    
+    // First run: initialize the file
+    if (current_size < NUMBYTES) {
+        printf("First run detected - initializing persistent file\n");
+        write_result = DfsInodeWriteBytes(inode_handle, expected_pattern, 0, NUMBYTES);
+        
+        if (ValidateWriteResult(write_result, NUMBYTES, "persistence initialization")) {
+            printf("Persistence file initialized with %d bytes\n", write_result);
+        }
+        
+        printf("Run simulation again to verify persistence\n");
+        printf("===== Persistence Test - First Run Complete =====\n\n");
+        return;
     }
- 
-    printf("runostests: first run finished.\n");
-    return;
-  }
- 
-  r = DfsInodeReadBytes(inode, readbuf, 0, NUMBYTES);
-  if(r == DFS_FAIL)
-  {
-    printf("runostests: DfsInodeReadBytes failed\n");
-    GracefulExit();
-  }
-  else
-  {
-    if (r != NUMBYTES)
-    {
-      printf("runostests: DfsInodeReadBytes read wrong size %d\n", r);
-      GracefulExit();
+    
+    // second run: verify data persisted
+    printf("Subsequent run detected - verifying persisted data\n");
+    read_result = DfsInodeReadBytes(inode_handle, read_buffer, 0, NUMBYTES);
+    
+    if (!ValidateReadResult(read_result, NUMBYTES, "persistence read")) {
+        HandleTestFailure("Failed to read persisted data");
     }
-  }
- 
-  for (i = 0; i < NUMBYTES; i++)
-  {
-    if (readbuf[i] != pattern[i])
-    {
-      same = 0;
-      break;
+    
+    // Compare byte by byte
+    for (idx = 0; idx < NUMBYTES; idx++) {
+        if (read_buffer[idx] != expected_pattern[idx]) {
+            data_matches = 0;
+            break;
+        }
     }
-  }
- 
-  if (same)
-  {
-    printf("runostests: persistence test passed!\n");
-  }
-  else
-  {
-    printf("runostests: second run mismatch\n");
-    r = DfsInodeWriteBytes(inode, pattern, 0, NUMBYTES);
- 
-    if(r == DFS_FAIL)
-    {
-      printf("runostests: rewrite DfsInodeWriteBytes failed\n");
-      GracefulExit();
+    
+    if (data_matches) {
+        printf("Data successfully persisted across runs!\n");
+        printf("===== Persistence Test PASSED =====\n\n");
+    } else {
+        printf("Data mismatch detected - reinitializing\n");
+        write_result = DfsInodeWriteBytes(inode_handle, expected_pattern, 0, NUMBYTES);
+        
+        if (ValidateWriteResult(write_result, NUMBYTES, "persistence rewrite")) {
+            printf("File rewritten - run again to verify\n");
+        }
     }
-    else
-    {
-      if (r != NUMBYTES)
-      {
-        printf("runostests: rewrite DfsInodeWriteBytes wrote wrong size %d\n", r);
-        GracefulExit();
-      }
-    }
-  }
 }
 

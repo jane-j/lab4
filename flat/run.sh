@@ -1,4 +1,4 @@
-rm /tmp/niharika.img
+rm /tmp/niharika_ostest.img
 cd apps/fdisk
 make clean
 cd ../../os
