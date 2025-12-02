@@ -476,15 +476,6 @@ void TestFileRename() {
         Exit();
     }
 
-    // Try to open old name (should fail or create new)
-    fd = file_open("old_name.dat", "r");
-    if(fd != -1) {
-        result = file_read(fd, read_buffer, 12);
-        if(result <= 0) {
-        }
-        file_close(fd);
-    }
-
     // Open new name and verify data
     fd = file_open("new_name.dat", "r");
     if(fd == -1) {
@@ -492,11 +483,13 @@ void TestFileRename() {
         Exit();
     }
     result = file_read(fd, read_buffer, 12);
-    if(result == 12 && read_buffer[0] == 'R' && read_buffer[7] == 'D') {
+    if(result == 12 && read_buffer[0] == 'R' && read_buffer[8] == 'D') {
+        Printf("Renamed file data matches at index 0 and 8\n");
+        Printf("TEST 9 PASSED\n\n");
     } else {
         Printf("WARNING: Renamed file data mismatch\n");
     }
     file_close(fd);
 
-    Printf("TEST 9 PASSED\n\n");
+    
 }
