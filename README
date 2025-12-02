@@ -1,0 +1,21 @@
+To build and run:
+1. Change into the corresponding directory
+2. Do "source run.sh" to format the Disk
+3a. In flat/, use "source run_ostests.sh" to test the full file system driver (Q4).
+            Use "source run_filecheck.sh" to test the file-based APIs.
+3b. In any pattern directory, still use "source run.sh" to format the Disk.
+        use "source run_<pattern1/pattern2/pattern3/dyn-pattern>.sh" to run the cache tests.
+File modified:
+    Q1: flat/apps/fdisk/fdisk.c
+        includes/os/disk.h
+    Q2: flat/os/dfs.c
+        includes/dfs_shared.h
+        includes/os/dfs.h
+    Q3: flat/os/dfs.c
+    Q4: flat/os/ostests.c
+    Q5: flat/os/files.c
+    Q6: flat/os/files.c
+    Q7: flat/os/dfs.c
+    Q8: flat/os/dfs.c 
+    Q9: flat/os/dfs.c
+All changes are accumulated on top of previous questions.
